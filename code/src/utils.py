@@ -1,0 +1,60 @@
+# /code/src/utils.py
+
+# Utils for the application
+
+# Python Libraries
+import time
+import uuid
+
+# Local Libraries
+from src.constants import BANNER_PADDING, SECONDS_IN_HR, SECONDS_IN_MIN, SECONDS_TO_MSEC
+
+
+def banner(title: str) -> None:
+    banner_length = len(title) + BANNER_PADDING
+    print(f"+{'-' * banner_length}+")
+    print(f"| {title} |")
+    print(f"+{'-' * banner_length}+")
+
+
+def format_time(duration: float) -> str:
+    hrs = 0
+    mins = 0
+    secs = 0
+    msec = 0
+
+    if duration > SECONDS_IN_HR:
+        hrs = duration // SECONDS_IN_HR
+        duration = duration % SECONDS_IN_HR
+    if duration > SECONDS_IN_MIN:
+        mins = duration // SECONDS_IN_MIN
+        duration = duration % SECONDS_IN_MIN
+
+    duration_ms = duration * SECONDS_TO_MSEC
+    msec = f"{duration_ms:.3f}"
+
+    return f"{hrs}h {mins}m {secs}s {msec}ms"
+
+
+def get_run_id() -> str:
+    return str(uuid.uuid4()).upper()[0:6]
+
+
+def get_time() -> float:
+    return time.time()
+
+
+def get_date():
+    return time.strftime("%Y-%m-%d")
+
+
+def start_timer() -> float:
+    return get_time()
+
+
+def stop_timer(start_time: float) -> float:
+    return get_time() - start_time
+
+
+def display_time(time_taken: float) -> None:
+    print(f"\nTime Taken: {format_time(time_taken)}")

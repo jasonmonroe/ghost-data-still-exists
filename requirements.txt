@@ -1,0 +1,12 @@
+# requirements.txt
+argparse
+python-dotenv
+openai
+requests
+pandas
+numpy
+matplotlib
+seaborn
+scikit-learn
+scipy
+statsmodels
