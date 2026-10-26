@@ -4,26 +4,22 @@
 
 
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import scikit-learn as sklearn
-import scipy as sp
-import statsmodels as sm
 
 # Local Libraries
 from src.constants import (
-    DATASET_FILES, 
-    DATASET_PATH, 
-    EVIDENCE_PATH, 
-    SAMPLE_DEL_REQUEST_FILE, 
-    SAMPLE_OUTPUT_FILE, 
+    DATASET_FILES,
+    DATASET_PATH,
+    EVIDENCE_PATH,
+    OUTPUT_FILE,
+    SAMPLE_DEL_REQUEST_FILE,
+    SAMPLE_OUTPUT_FILE,
     USE_SAMPLE,
-    )
+)
+
 
 class DataHandler:
-    def __init__(self, use_sample: bool):
-        
+    def __init__(self):
+
         self.deletion_requests = None
         self.deletion_rules = None
         self.evidence_files = None
@@ -31,51 +27,41 @@ class DataHandler:
         self.system_activity = None
         self.user_audit_log = None
         self.user_identities = None
-        
+
+        self.load_data()
+
         self.evidence = self._load_evidence()
 
-    def load_data(self, use_sample: bool):
-         
-        for csv_file in DATASET_FILES:
-            if getattr(self, csv_file):
-                filepath = f"{DATASET_PATH}{csv_file}.csv"
-                setattr(self, csv_file, pd.read_csv(filepath))
+    def load_data(self):
+
+        for csv_filename in DATASET_FILES:
+            if hasattr(self, csv_filename):
+                filepath = DATASET_PATH / f"{csv_filename}.csv"
+                setattr(self, csv_filename, pd.read_csv(filepath))
 
         # Override output if using sample
-        if use_sample:
+        if USE_SAMPLE in [True, "True"]:
+            print("ℹ️ Using sample data")
             self.output = DATASET_PATH / f"{SAMPLE_OUTPUT_FILE}.csv"
             self.deletion_requests = DATASET_PATH / f"{SAMPLE_DEL_REQUEST_FILE}.csv"
-     
 
-    def _load_evidence(self):
-        # Just load the filenames
-        self.evidence = []
+    def _load_evidence(self) -> dict:
+        # Just load the filenames do not read until ready for reading
+        self.evidence = {}
 
         # Map each evidence subdirectory name to its sorted file paths.
         return {
             sub_dir.name: sorted(
-                p for p in sub_dir.iterdir()
+                p
+                for p in sub_dir.iterdir()
                 if p.is_file() and not p.name.startswith(".")
             )
             for sub_dir in sorted(EVIDENCE_PATH.iterdir())
             if sub_dir.is_dir()
         }
 
-        """
-        for sub_dir in EVIDENCE_PATH:
-            dir_name = str(sub_dir.stem).lower()
-            self.evidence[dir_name] = {}
-
-            # Get all file paths in the sub directory
-            sub_dir_files = [f for f in sub_dir.iterdir() if f.is_file()]
-            for sub_dir_files in sub_dir.iterdir():
-                for sub_dir_file in sub_dir_files:
-                    # read data
-                    sub_dir_filepath =  None
-                    self.evidence[dir_name][sub_dir_file.name] = None
-        """
-
-    def save(self, output_csv):
+    def save(self, output_csv) -> None:
         # Save output csv file to dataset output file.
-        
-    
+        print(f"Saving data to {OUTPUT_FILE}.")
+        output_df = pd.DataFrame(output_csv)
+        output_df.to_csv(OUTPUT_FILE, index=False)

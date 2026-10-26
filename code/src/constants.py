@@ -13,7 +13,7 @@ USE_SAMPLE = os.getenv("USE_SAMPLE", "True")
 
 # Data paths
 DATASET_PATH = Path("./dataset/")
-EVIDENCE_PATH = f"{DATASET_PATH}evidence/"
+EVIDENCE_PATH = DATASET_PATH / "evidence"
 
 DEL_REQUEST_FILE = "deletion_requests"
 SAMPLE_DEL_REQUEST_FILE = "sample_deletion_requests"
@@ -35,3 +35,4 @@ BANNER_PADDING = 4
 SECONDS_IN_MIN = 60
 SECONDS_IN_HR = SECONDS_IN_MIN * SECONDS_IN_MIN
 SECONDS_TO_MSEC = 1000
+PEP8_LINE_LEN = 79

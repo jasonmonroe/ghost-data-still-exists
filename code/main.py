@@ -40,11 +40,11 @@ numbers to track down all traces of the user.
 3. Deciding the Outcome
 For each case, your program has to output one of three statuses:
 
-- COMPLETE: The data is truly gone (or properly anonymized/retained according to
-strict company policy), and you can prove it with evidence.
+- COMPLETE: The data is truly gone (or properly anonymized/retained according
+to strict company policy), and you can prove it with evidence.
 
-- INCOMPLETE: Ghost data still exists, or an active process/backup can bring the
-+data back to life.
+- INCOMPLETE: Ghost data still exists, or an active process/backup can bring
+the data back to life.
 
 - NOT_APPLICABLE: The user didn't actually request a deletion.
 
@@ -64,28 +64,35 @@ __version__ = "1.0.0"
 """
 
 from dotenv import load_dotenv
+from src.constants import APP_NAME
 
 load_dotenv()
 
 
 # Local Libraries
-from code.pipelines.run_case_audit_pipeline import run_case_audit_pipeline
-
-from src.utils import display_time, get_run_id, start_timer, stop_timer
+from pipelines.run_case_audit_pipeline import run_case_audit_pipeline
+from src.data_handler import DataHandler
+from src.utils import banner, get_run_id, show_time, start_timer, stop_timer
 
 
 def main():
-    print("Main Script!")
+    print("Main Script!\n\n")
 
     # Calling main pipeline from code evaluation
 
     # Get Dataset
-    dataset = {}
+    data_handle = DataHandler()
+    dataset = data_handle.__dict__
 
     # Running pipelines
     output_csv = run_case_audit_pipeline(dataset)
 
+    if len(output_csv) == 0:
+        print("⚠️ Warning: No output data returned.")
+        return
+
     # Override dataset/output.csv
+    data_handle.save(output_csv)
 
 
 if __name__ == "__main__":
@@ -93,14 +100,13 @@ if __name__ == "__main__":
     run_id = get_run_id()
     print(f"Run ID: {run_id}")
 
+    banner(APP_NAME)
+
     # Start Time
     start_time = start_timer()
-
     main()
-
-    # End Time
     time_taken = stop_timer(start_time)
 
     # Print Time Taken
-    display_time(time_taken)
-    print(f"----- End of Program {run_id} -----")
+    show_time(time_taken)
+    print(f"----- End of Program {run_id} -----\n")

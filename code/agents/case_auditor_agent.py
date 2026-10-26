@@ -16,7 +16,7 @@ class CaseAuditorAgent:
         # It's empty right now
         pass
 
-    def get_case_by_id(case_id):
+    def get_case_by_id(case_id: str):
         # main public function
         pass
 
