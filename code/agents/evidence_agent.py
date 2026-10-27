@@ -1,6 +1,7 @@
 # code/agents/evidence_agent.py
 
 # Python Libraries
+import hashlib
 import json
 import pathlib
 import sqlite3
@@ -27,6 +28,7 @@ class EvidenceAgent:
         self.logs = None
         self.records = None
 
+        self.evidence = evidence  # @TODO - might not need
         self._evidence_files = None
         self._system_activity = None
 
@@ -45,54 +47,61 @@ class EvidenceAgent:
         # Get info user has ever used: user_ids, emails, phones, email hashes
 
         # Check evidence files for relevant data
-        evidence_dataset = self._filter_evidence_files()
+        evidence_dataset = self._get_evidence()
 
         # Parse and interpret Evidence results
         # @TODO - what should be done now?
 
         return evidence_dataset
 
-    def _filter_system_activity(self):
+    def _get_evidence(self) -> list:
+        # Only look for evidence files that are relevant to the user
+        evidence = []
 
-        # user_audit_log.field_name == "email_hash", return  user_audit_log.new_value
-
-        pass
-
-    def _filter_evidence_files(self) -> dict:
-        file_data = {}
         for evidence_file in self._evidence_files.items():
-            file_id = evidence_file["file_id"]
-            origin = evidence_file["origin"]
-            captured_at = evidence_file["captured_at"]
-
             filepath = Path(evidence_file["file_path"])
             if not filepath.exists():
                 print(f"Error: {filepath} does not exist.")
                 continue
 
-            file_ext = filepath.suffix.lower()
+            file_data = self._read_evidence(filepath)
 
-            if file_ext == ".pdf":
-                file_data[file_id] = self.read_pdf(filepath)
-            elif file_ext in [".log", ".txt"]:
-                file_data[file_id] = self._read_log_or_text(filepath)
-            elif file_ext == ".png":
-                file_data[file_id] = self._read_image(filepath)
-            elif file_ext == ".sql":
-                file_data[file_id] = self._read_sql(filepath)
-            else:
-                file_data[file_id] = {
-                    "path": str(filepath),
-                    "type": "binary/unsupported",
-                    "size": filepath.stat().st_size,
-                }
+            # Is this hashing the filepath string or the content?
+            checksum = hashlib.file_digest(file_data, "sha256").hexdigest()
 
-            evidence_file["file_data"] = file_data
+            file_dict = {
+                "file_id": evidence_file["file_id"],
+                "origin": evidence_file["origin"],
+                "captured_at": evidence_file["captured_at"],
+                "file_data": file_data,
+                "checksum": checksum,
+            }
 
-        # return file_data
-        return evidence_file
+            evidence.append(file_dict)
 
-    def _read_pdf(self, filepath: pathlib.Path):
+        return evidence
+
+    def _read_evidence(self, path: pathlib.Path):
+        ext = path.suffix.lower()
+
+        if ext == ".pdf":
+            content = self.read_pdf(path)
+        elif ext in [".log", ".txt"]:
+            content = self._read_log_or_text(path)
+        elif ext == ".png":
+            content = self._read_image(path)
+        elif ext == ".sql":
+            content = self._read_sql(path)
+        else:
+            content = {
+                "path": str(path),
+                "type": "binary/unsupported",
+                "size": path.stat().st_size,
+            }
+
+        return content
+
+    def _read_pdf(self, filepath: pathlib.Path) -> dict:
         query_table_name = "SELECT name FROM sqlite_master WHERE type='table';"
         conn = sqlite3.connect(filepath)
         cursor = conn.cursor()

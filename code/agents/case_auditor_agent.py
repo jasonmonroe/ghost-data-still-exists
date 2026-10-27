@@ -17,6 +17,7 @@ import json
 import pandas as pd
 
 # Local Libraries
+from agents.deletion_rule_agent import DeletionRuleAgent
 from agents.evidence_agent import EvidenceAgent
 from models.llm_model import LlmModel
 from src.constants import NON_DELETION_KEYWORDS, VALID_KEYPHRASES, VALIDITY_PROMPT
@@ -28,11 +29,10 @@ class CaseAuditorAgent:
     def __init__(self, dataset: dict) -> None:
         self._data = dataset
         self._model = LlmModel()
-        self._agent = EvidenceAgent(
-            dataset.get("evidence"),
-            # dataset.get("evidence_files"),
-            # dataset.get("system_activity"),
+        self._evidence_agent = EvidenceAgent(
+            dataset.get("evidence"),  # @TODO - may not need
         )
+        self._rules_agent = DeletionRuleAgent(dataset.get("deletion_rules"))
         self._bulder = None
 
         self.case_id = None
@@ -56,13 +56,20 @@ class CaseAuditorAgent:
         else:
             # Confirmed, customer wants account deleted
             user_dataset = self._filter_by_user()
-            evidence_dataset = self._analyze(user_dataset)
-            user_evidence_dataset = {**user_dataset, **evidence_dataset}
 
-            # With results lets build a prompt and get a response to determine final DeletionStatus
-            builder = PromptBuilder(user_evidence_dataset)
-            deletion_status = self._get_deletion_status(builder.prompt)
+            if user_dataset.get("user_identity") is None:
+                deletion_status = DeletionStatus.COMPLETE
+                evidence_dataset = {}
+            else:
+                evidence_dataset = self._analyze(user_dataset)
+                user_evidence_dataset = {**user_dataset, **evidence_dataset}
 
+                # With results lets build a prompt and get a response to determine final DeletionStatus
+                builder = PromptBuilder(user_evidence_dataset)
+                deletion_status = self._get_deletion_status(builder.prompt)
+
+            # @TODO - Apply Rules here?
+            results = self._rules_agent.apply()
             steps_json = self._finalize(deletion_status)
 
         # Build Prompt
@@ -92,35 +99,14 @@ class CaseAuditorAgent:
         snapshots, logs, and support tickets) to see if personal data is still
         lingering somewhere it shouldn't be."""
 
-        if user_dataset.get("user_identity") is None:
-            deletion_status = DeletionStatus.COMPLETE
-            evidence_dataset = {}
-            # steps_json = ["User not found"]
-        else:
-            # Search global logs (system_activity.csv), evidence files, databases,
-            # backups, or exports around or before audit_at (2026-09-03T11:30:00Z)
-            # to see if any residual data or recreation risks exist, comparing
-            # findings against deletion_rules.csv.
-            self._agent = EvidenceAgent(
-                self._data.get("evidence"),
-                self._data.get("evidence_files"),
-            )
-            evidence_dataset = self._agent.search(
-                user_dataset,
-                # self._data.get("system_activity"),
-            )
+        # Search global logs (system_activity.csv), evidence files, databases,
+        # backups, or exports around or before audit_at (2026-09-03T11:30:00Z)
+        # to see if any residual data or recreation risks exist, comparing
+        # findings against deletion_rules.csv.
 
-            # Set deletion status to None to be determined later
-            deletion_status = None
+        evidence_dataset = self._evidence_agent.search(user_dataset)
 
-            # steps_json = []
-
-        # Return activity dataset to build final prompt
-        return {
-            "deletion_status": deletion_status,
-            "evidence_dataset": evidence_dataset,
-            # "steps_json": steps_json,
-        }
+        return evidence_dataset
 
     def _filter_by_user(self) -> dict:
         """Resolve Identities: Match current and historical names, emails, and
@@ -174,13 +160,17 @@ class CaseAuditorAgent:
 
     def _get_deletion_status(self, prompt: str) -> str:
         """For each case, your program has to output one of three statuses:
-        - COMPLETE: The data is truly gone (or properly anonymized/retained
+
+        - COMPLETE:
+        The data is truly gone (or properly anonymized/retained
         according to strict company policy), and you can prove it with evidence.
 
-        - INCOMPLETE: Ghost data still exists, or an active process/backup can
+        - INCOMPLETE:
+        Ghost data still exists, or an active process/backup can
         bring the data back to life.
 
-        - NOT_APPLICABLE: The user didn't actually request a deletion."""
+        - NOT_APPLICABLE:
+        The user didn't actually request a deletion."""
 
         response = self._model.get_response(prompt)
 
@@ -206,8 +196,7 @@ class CaseAuditorAgent:
         steps_json = {}
 
         if deletion_status in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
-            # Build steps
-            pass
+            steps_json[""] = ""
 
         return steps_json
 
