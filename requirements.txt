@@ -3,5 +3,9 @@
 numpy
 openai
 pandas
+pathlib
+Pillow>=9.0.0
+pypdf
 pytest
 python-dotenv
+xmltodict

@@ -37,7 +37,7 @@ shouldn't be.
 - Resolve Identities: Match current and historical names, emails, and phone
 numbers to track down all traces of the user.
 
-3. Deciding the Outcome
+3. Deciding the DeletionStatus
 For each case, your program has to output one of three statuses:
 
 - COMPLETE: The data is truly gone (or properly anonymized/retained according
@@ -70,15 +70,15 @@ load_dotenv()
 
 
 # Local Libraries
+from evaluation.main import main as run_evaluation_pipeline
 from pipelines.run_case_audit_pipeline import run_case_audit_pipeline
 from src.data_handler import DataHandler
 from src.utils import banner, get_run_id, show_time, start_timer, stop_timer
 
 
 def main():
-    print("Main Script!\n\n")
-
     # Calling main pipeline from code evaluation
+    run_evaluation_pipeline()
 
     # Get Dataset
     data_handle = DataHandler()

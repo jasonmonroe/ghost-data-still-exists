@@ -73,7 +73,7 @@ def get_progress_bar(idx: int, total: int) -> str:
     for i in range(total):
         graphic += i_full if i <= idx else i_empty
 
-    return graphic + f"\t{completion_pct:.1f}%"
+    return graphic + f"\t{idx} / {total}\t{completion_pct:.1f}%"
 
 
 def get_run_id() -> str:

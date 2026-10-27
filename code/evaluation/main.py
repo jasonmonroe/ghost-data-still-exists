@@ -9,7 +9,7 @@ generate metrics for your evaluation_report.md
 
 
 def main():
-    print("Evaluation Main Script")
+    print("\n--- 🏃 Running Evaluation Pipeline 🏃 ---")
 
 
 if __name__ == "__main__":
