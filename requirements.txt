@@ -6,6 +6,7 @@ pandas
 pathlib
 Pillow>=9.0.0
 pypdf
+pytesseract
 pytest
 python-dotenv
 xmltodict

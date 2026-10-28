@@ -61,6 +61,7 @@ class PromptBuilder:
         """
 
         """
+        Example:
         sample_dict = {
             "case": {
                 "@id": "case_001",
@@ -115,11 +116,8 @@ class PromptBuilder:
         if bool(evidence):
             data_dict["case"].update(evidence)
 
-        case_dict = data_dict.copy()
-
         # Convert dataset to XML data
-
-        case_xml = self._convert_to_xml(case_dict)
+        case_xml = self._convert_to_xml(data_dict)
         self.prompt = self._format(case_xml)
 
     def _convert_to_xml(self, case_dict):
