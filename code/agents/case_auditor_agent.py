@@ -265,7 +265,7 @@ class CaseAuditorAgent:
         }
         ```
         """
-
+        # @TODO - Verify data is correct.
         if deletion_status in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
             self._steps_agent.add(
                 phase=None,  # StepPhrases.VERIFICATION,

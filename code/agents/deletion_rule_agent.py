@@ -69,7 +69,13 @@ class DeletionRuleAgent:
         matched = self.rules[self.rules["data_category"] == category]
 
         if not matched.empty:
-            return matched.iloc[0].to_dict
+            category_rule = matched.iloc[0].to_dict
+            self.rule_id = category_rule["rule_id"]
+            self.data_category = category_rule["data_category"]
+            self.condition = category_rule["condition"]
+            self.required_action = category_rule["required_action"]
+
+            return category_rule
 
         return {}
 

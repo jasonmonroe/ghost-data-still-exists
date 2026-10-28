@@ -12,6 +12,7 @@ from google.genai.errors import APIError  # Or general Exception
 
 # from openai import InternalServerError, RateLimitError
 from src.constants import (
+    INTERNAL_STATUS_ERR_CODE,
     MAX_TOKENS,
     MODEL_NAME,
     RATE_LIMIT_PAUSE_TIMER,
@@ -33,7 +34,7 @@ class LlmModel:
         self._client = genai.Client()
         self.usage = UsageTracker()
 
-    def get_response(self, prompt: str):
+    def get_response(self, prompt: str) -> str | dict:
         attempt = 0
         while attempt < RATE_LIMIT_RETRIES:
             try:
@@ -48,7 +49,7 @@ class LlmModel:
                         "thinking_level": "low",
                     },
                 )
-
+                # Process and format response
                 content = self._process_response(response, prompt)
 
                 return json.loads(content) if content else {}
@@ -61,31 +62,19 @@ class LlmModel:
                     print("\n🚨 Max retries reached for rate limit. 🚨")
                     return {"error": True}
 
-                print(f"\n⏸️ Rate limit hit. Pausing for {RATE_LIMIT_PAUSE_TIMER}s...")
-                time.sleep(RATE_LIMIT_PAUSE_TIMER)
-                attempt += 1
+                if e.code == RATE_LIMIT_STATUS_ERR_CODE:
+                    print(
+                        f"\n⏸️ Rate limit hit. Pausing for {RATE_LIMIT_PAUSE_TIMER}s..."
+                    )
+                    time.sleep(RATE_LIMIT_PAUSE_TIMER)
+                    attempt += 1
 
-                if e.code >= INTERNAL_STATUS_ERR_CODE:
+                elif e.code >= INTERNAL_STATUS_ERR_CODE:
                     print(f"\n🚨 Google server error {e.code}: Temporary Issue")
                 else:
                     print(f"🚨 API Error Code! {e}")
 
-                attempt += 1
-
-                return {}
-
-            except RateLimitError:
-                if attempt >= RATE_LIMIT_RETRIES - 1:
-                    print("\n🚨 Max retries reached for rate limit. 🚨")
-                    return {"error": True}
-
-                print(f"\n⏸️ Rate limit hit. Pausing for {RATE_LIMIT_PAUSE_TIMER}s...")
-                time.sleep(RATE_LIMIT_PAUSE_TIMER)
-                attempt += 1
-
-            except (InternalServerError, Exception) as e:
-                print(f"\n🚨 API error encountered: {e} 🚨")
-                return {}
+                return {"error": True}
 
     def _process_response(self, response, prompt: str):
 

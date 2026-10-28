@@ -97,16 +97,11 @@ class StepsAgent:
 
         steps = []
         for idx, item in enumerate(self._data, start=1):
-            steps.append(
-                {
-                    "step_no": idx,
-                    "phrase": item["phrase"],
-                    "system_id": item["system_id"],
-                    "resource_id": item["resource_id"],
-                    "operation": item["operation"],
-                    "state": item["state"],
-                    "evidence_id": item["evidence_id"],
-                }
-            )
+            # Create a copy or update the dictionary directly to include step_no
+            step_item = (
+                item.copy()
+            )  # Good practice to avoid mutating self._data directly
+            step_item["step_no"] = idx
+            steps.append(step_item)
 
         return json.dumps(steps)

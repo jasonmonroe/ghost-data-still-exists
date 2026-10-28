@@ -66,8 +66,13 @@ __version__ = "1.0.0"
 from dotenv import load_dotenv
 from src.constants import APP_NAME
 
-load_dotenv()
+# Python Libraries
 
+load_dotenv("../.env")
+
+# Python Libraries
+
+import warnings
 
 # Local Libraries
 from evaluation.main import main as run_evaluation_pipeline
@@ -77,6 +82,8 @@ from src.utils import banner, get_run_id, show_time, start_timer, stop_timer
 
 
 def main():
+    warnings.filterwarnings("ignore")
+
     # Calling main pipeline from code evaluation
     run_evaluation_pipeline()
 

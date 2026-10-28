@@ -35,9 +35,6 @@ class ModelUsage:
         default_factory=lambda: {"response_id": None, "tokens": 0, "prompt": ""}
     )
 
-    least: dict = {"response_id": None, "tokens": MAX_TOKENS * 2, "prompt": ""}
-    most: dict = {"response_id": None, "tokens": 0, "prompt": ""}
-
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
@@ -53,20 +50,19 @@ class UsageTracker:
     ) -> None:
         usage = self._by_model.setdefault(model, ModelUsage())
 
-        # Record prompt ID's and min/max token usage
-        if usage.total_tokens <= min(usage.least["tokens"], usage.total_tokens):
-            usage.least = {
-                "resource_id": self.response_id,
-                "prompt": prompt,
-                "tokens": usage.total_tokens,
-            }
+        total_tokens = input_tokens + output_tokens
+        token_data = {
+            "resource_id": self.response_id,
+            "prompt": prompt,
+            "tokens": total_tokens,
+        }
 
-        if usage.total_tokens >= max(usage.most["tokens"], usage.total_tokens):
-            usage.most = {
-                "resource_id": self.response_id,
-                "prompt": prompt,
-                "tokens": usage.total_tokens,
-            }
+        # Record prompt ID's and min/max token usage
+        if total_tokens <= min(usage.least["tokens"], total_tokens):
+            usage.least = token_data
+
+        if total_tokens >= max(usage.most["tokens"], total_tokens):
+            usage.most = token_data
 
         # Update the input and output tokens
         usage.calls += 1
@@ -84,11 +80,3 @@ class UsageTracker:
             overall.output_tokens += usage.output_tokens
 
         return overall
-
-    def least_expensive_prompt(self) -> dict:
-        overall = ModelUsage()
-        return overall.least
-
-    def most_expensive_prompt(self) -> dict:
-        overall = ModelUsage()
-        return overall.most

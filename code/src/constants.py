@@ -3,6 +3,9 @@
 # |                              CONSTANTS                                    |
 # +---------------------------------------------------------------------------+
 
+# 🚨
+# ⚠️
+# 💡
 
 import os
 import re
@@ -53,6 +56,9 @@ LINK_RE = re.compile(r"linked (\S+) .*? to (\S+@\S+?) and (user_\d+)", re.IGNORE
 ABSENT_HINT_RE = re.compile(
     r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE
 )
+
+RATE_LIMIT_STATUS_ERR_CODE = 429
+INTERNAL_STATUS_ERR_CODE = 500
 
 SYSTEM_BY_PREFIX = {  # resource prefix → output system_id
     "account": "account_service",
