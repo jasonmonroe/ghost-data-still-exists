@@ -94,3 +94,7 @@ def stop_timer(start_time: float) -> float:
 
 def show_time(time_taken: float) -> None:
     print(f"\n⏱ Time Taken: {format_time(time_taken)}")
+
+
+def prefix_of(resource_id: str) -> str:
+    return resource_id.rsplit("_", 1)[0]

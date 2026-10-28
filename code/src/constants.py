@@ -29,7 +29,6 @@ DATASET_FILES = [
     "system_activity",
     "user_audit_log",
     "user_identities",
-    # OUTPUT_FILE,
 ]
 
 # Miscellaneous
@@ -39,6 +38,7 @@ SECONDS_IN_MIN = 60
 SECONDS_IN_HR = SECONDS_IN_MIN * SECONDS_IN_MIN
 SECONDS_TO_MSEC = 1000
 MAX_TOKENS = 2048
+DATETIME_DURATION = 10
 RATE_LIMIT_PAUSE_TIMER = 3
 RATE_LIMIT_RETRIES = 4
 

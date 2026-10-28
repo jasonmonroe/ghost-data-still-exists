@@ -152,8 +152,7 @@ class CaseAuditorAgent:
             }
 
         # User identified, now lets perform light filtering on corresponding data
-        user_identity = user_identity.iloc[0].to_dict()
-        user_id = user_identity["user_id"]
+        user_id = user_identity.iloc[0].to_dict()["user_id"]
 
         # Get user history.  It's possible that this could be empty.
         user_audit_log = user_audit_log_df[user_audit_log_df["user_id"] == user_id]
