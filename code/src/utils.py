@@ -6,6 +6,9 @@
 import time
 import uuid
 
+# Vendor Libraries
+import pandas as pd
+
 # Local Libraries
 from src.constants import (
     BANNER_PADDING,
@@ -97,4 +100,12 @@ def show_time(time_taken: float) -> None:
 
 
 def prefix_of(resource_id: str) -> str:
+    """Return the record-type prefix of a resource id: 'audit_record_265' -> 'audit_record'."""
     return resource_id.rsplit("_", 1)[0]
+
+
+def clean_str(value) -> str:
+    """Return a stripped string; None and NaN (empty pandas cells) become ""."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    return str(value).strip()

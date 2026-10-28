@@ -3,7 +3,7 @@
 # +---------------------------------------------------------------------------+
 # |                              PROMPT BUILDER                               |
 # +---------------------------------------------------------------------------+
-
+# @depracted
 
 # Python Libraries
 import pandas as pd
@@ -93,8 +93,7 @@ class PromptBuilder:
                     "path": "evidence/records/customer_snapshot.json",
                     "origin": "records_assurance_snapshot_bundle",
                     "captured_at": "2026-09-17T12:00:00Z",
-                    "data": "{'user_id': 'user_005', 'status': 'active'}",
-                    "checksum": "a1b2c3d4e5f6"
+                    "content": "{'user_id': 'user_005', 'status': 'active'}",
                 }
             }
         }

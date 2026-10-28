@@ -25,6 +25,8 @@ remediation → verification). Full contract: `problem_statement.md`.
 - **Run after every change.** Never hand back code that hasn't been executed. Show the command and result.
 - Don't rewrite whole files unless asked; show/modify only the relevant sections.
 - Be direct and candid; no filler.
+- Answer questions and review; always ask before writing code since Jason's coding style isn't as advanced as
+  Claudes.
 
 ## Run / test
 

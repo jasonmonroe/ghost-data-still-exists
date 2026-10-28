@@ -1,8 +1,14 @@
 # code/agents/evidence_agent.py
-# +---------------------------------------------------------------------------+
-# |                               EVIDENCE AGENT                              |
-# +---------------------------------------------------------------------------+
+
 """
++-----------------------------------------------------------------------------+
+|                                EVIDENCE AGENT                               |
++-----------------------------------------------------------------------------+
+
+Digital detective—its sole job is to answer: "Does this resource exist in the
+evidence, what is its state (PRESENT/ABSENT), and what is its timeline?" It
+shouldn't need to know about compliance policies or required remediation actions.
+
 Turns raw evidence into a per-resource ledger for one case.
 
     all_evidence (files captured <= audit_at)
@@ -28,26 +34,17 @@ from PIL import Image
 from pypdf import PdfReader
 
 # Local Libraries
-from src.constants import DATASET_PATH
-
-RESOURCE_ID_RE = re.compile(
-    r"\b(?:account|search|analytics|support|cache|export|email_delivery|audit_record"
-    r"|data_flow|backup|tombstone|legal_hold|marketing|object)_\d+\b"
+from src.constants import (
+    ABSENT_HINT_RE,
+    DATASET_PATH,
+    LINK_RE,
+    PHONE_RE,
+    RESOURCE_ID_RE,
+    TARGET_SYSTEMS,
+    TRACE_ID_RE,
 )
-TRACE_ID_RE = re.compile(r"\b(tr-[\w-]+)\b")
-PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
-LINK_RE = re.compile(r"linked (\S+) .*? to (\S+@\S+?) and (user_\d+)", re.IGNORECASE)
-ABSENT_HINT_RE = re.compile(r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE)
-
-
-def prefix_of(resource_id: str) -> str:
-    """'audit_record_265' -> 'audit_record'."""
-    return resource_id.rsplit("_", 1)[0]
-
-
-def _clean(value) -> str:
-    """NaN / None safe string."""
-    return "" if value is None or (isinstance(value, float) and pd.isna(value)) else str(value).strip()
+from src.enums import StepStates
+from src.utils import clean_str, prefix_of
 
 
 @dataclass(frozen=True)
@@ -72,22 +69,49 @@ class EvidenceAgent:
         self._system_by_prefix: dict[str, str] = self._build_system_by_prefix()
 
     # ------------------------------------------------------------------ public
-    def search(self, user_dataset: dict) -> list[ResourceFinding]:
-        self.user = user_dataset
-        self._evidence_files = user_dataset["evidence_files"].to_dict(orient="records")
+    def search(self, user_dataset: dict, rules_agent) -> list[ResourceFinding]:
+        """
+        When you call agent.search(user_dataset), it executes four major phases:
 
-        all_evidence = self._get_evidence()  # every file <= audit_at (needed for absence proof)
+        _get_evidence(): Loads and parses every evidence file whose capture time
+        is on or before the case's audit_at timestamp.
+
+        _filter(): Narrows down the massive pool of evidence files to only those
+        that actually mention the user.
+
+        _user_resources(): Extracts every resource ID tied to the user (via
+        system activity events, co-occurrence in evidence chunks, or
+        resource-identity link tables).
+
+        _build_finding(): For each discovered resource, it reconstructs its
+        lifecycle timeline and inspects newer evidence to prove its final state
+        at audit_at.
+        """
+
+        # self._evidence_files = user_dataset["evidence_files"].to_dict(orient="records")
+        self._evidence_files = user_dataset.pop("evidence_files", None)
+        self.user = user_dataset
+
+        all_evidence = (
+            self._get_evidence()
+        )  # every file <= audit_at (needed for absence proof)
         matched = self._filter(all_evidence)  # files that mention the user
 
-        resource_ids = self._user_resources(matched)  # A
-        return [self._build_finding(rid, all_evidence) for rid in sorted(resource_ids)]  # B-D
+        resource_ids = self._user_resources(matched)
+        return [
+            self._build_finding(rid, all_evidence, rules_agent)
+            for rid in sorted(resource_ids)
+        ]  # B-D
 
-    # ------------------------------------------------------- A. user resources
     def _user_resources(self, matched: list[dict]) -> set[str]:
         resources: set[str] = set()
 
         # 1. The case's own workflow events (reported_at +/- window)
-        resources |= {_clean(r) for r in self.user["system_activity"]["resource_id"] if _clean(r)}
+        resources |= {
+            clean_str(r)
+            for r in self.user["system_activity"]["resource_id"]
+            if clean_str(r)
+        }
 
         # 2. Resources in the SAME line / row / record / trace as a user identifier
         for f in matched:
@@ -99,25 +123,39 @@ class EvidenceAgent:
         pool = self._activity_pool()
         links = pool[pool["event_type"] == "LINK_RESOURCE_IDENTITY"]
         for details in links["details"]:
-            m = LINK_RE.search(_clean(details))
+            m = LINK_RE.search(clean_str(details))
             if m and self._mentions_user(f"{m.group(2)} {m.group(3)}"):
                 resources.add(m.group(1))
 
         return resources
 
-    # ------------------------------------------------------------- B. timeline
     def _timeline(self, resource_id: str) -> pd.DataFrame:
         pool = self._activity_pool()
-        return pool[pool["resource_id"] == resource_id].sort_values(["event_time", "activity_id"])
+        return pool[pool["resource_id"] == resource_id].sort_values(
+            ["event_time", "activity_id"]
+        )
 
     def _activity_pool(self) -> pd.DataFrame:
         """All activity <= audit_at (falls back to the workflow window if not supplied)."""
         pool = self.user.get("activity_pool")
         return pool if pool is not None else self.user["system_activity"]
 
-    # ---------------------------------------------------------------- C. state
-    def _state(self, resource_id: str, after: str, evidence: list[dict]) -> tuple[str, str | None]:
-        """Newest evidence captured after the last action decides the state."""
+    def _state(
+        self, resource_id: str, after: str, evidence: list[dict]
+    ) -> tuple[str, str | None]:
+        """
+        Newest evidence captured after the last action decides the state.
+
+        To determine if a resource is PRESENT or ABSENT, the agent looks at
+        evidence captured after the user's last deletion action:
+        If it finds the resource ID in a fresh snapshot or log, it's marked
+        PRESENT.
+        If it finds explicit absence indicators (like 404 HTTP statuses, rows=0,
+        or NOT_FOUND hints), or if a full system snapshot lists other items of
+        that type but omits this specific resource ID, it definitively proves
+        ABSENT.
+        """
+
         candidates = sorted(
             (f for f in evidence if f["captured_at"] >= after),
             key=lambda f: (f["captured_at"], f["file_id"]),
@@ -132,12 +170,12 @@ class EvidenceAgent:
             if hits:
                 # A lookup that returned 0 rows / 404 / NOT_FOUND proves absence, not presence
                 if all(ABSENT_HINT_RE.search(c) for c in hits):
-                    return "ABSENT", f["file_id"]
-                return "PRESENT", f["file_id"]
+                    return StepStates.ABSENT, f["file_id"]
+                return StepStates.PRESENT, f["file_id"]
             # Snapshot lists other records of this type but not this one -> absent
             if self._is_snapshot(f) and any(same_type_re.search(c) for c in chunks):
-                return "ABSENT", f["file_id"]
-        return "UNKNOWN", None
+                return StepStates.ABSENT, f["file_id"]
+        return StepStates.UNKNOWN, None
 
     @staticmethod
     def _is_snapshot(f: dict) -> bool:
@@ -145,20 +183,73 @@ class EvidenceAgent:
         return f["file_path"].suffix.lower() in {".sql", ".json"}
 
     # -------------------------------------------------------------- D. finding
-    def _build_finding(self, resource_id: str, evidence: list[dict]) -> ResourceFinding:
+    def _build_finding(
+        self, resource_id: str, evidence: list[dict], rules_agent
+    ) -> ResourceFinding:
         timeline = self._timeline(resource_id)
         after = timeline["event_time"].max() if not timeline.empty else ""
         state, evidence_id = self._state(resource_id, after, evidence)
+
+        # @TODO identifier fields still filled -> REPORT_EXPOSED_PII (StepOperations.__)
+        exposed = (
+            (self._get_exposed(state, evidence, resource_id, evidence_id),)
+            if state == StepStates.PRESENT
+            else frozenset()
+        )
+
         return ResourceFinding(
             system_id=self._system_by_prefix.get(prefix_of(resource_id), "unknown"),
             resource_id=resource_id,
-            category=None,  # @TODO prefix -> data_category map (deletion_rules)
+            category=rules_agent.get_category(resource_id),
             state=state,
             evidence_id=evidence_id,
-            exposed_fields=frozenset(),  # @TODO identifier fields still filled -> REPORT_EXPOSED_PII
-            attributes={},  # @TODO enabled / restore_allowed / retention_until
+            exposed_fields=exposed,
+            attributes={
+                "enabled": True,
+                "restore_allowed": False,
+            },
             timeline=tuple(timeline["activity_id"]),
         )
+
+    def _get_exposed(
+        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
+    ):
+        exposed = set()
+
+        if state != StepStates.PRESENT or not evidence_id:
+            return exposed
+
+        # 1. Directly pluck the matching evidence file
+        target_evidence = next(
+            (e for e in evidence if e.get("file_id") == evidence_id), None
+        )
+        if not target_evidence:
+            return exposed
+
+        content = target_evidence["content"]
+        text_terms, phone_terms = self._terms
+
+        def add_text_terms(chunk_text, terms, exp_set):
+            for term in terms:
+                if term and term in chunk_text.lower():
+                    exp_set.add("identifier")
+            return exp_set
+
+        def add_phone_terms(chunk_text, p_terms, exp_set):
+            found_phones = {re.sub(r"\D", "", p) for p in PHONE_RE.findall(chunk_text)}
+            if found_phones and (found_phones & p_terms):  # intersection check
+                exp_set.add("phone")
+            return exp_set
+
+        # 2. Search chunks within that specific file
+        for chunk in self._chunks(content):
+            if resource_id in chunk:
+                exposed = add_text_terms(chunk, text_terms, exposed)
+                if phone_terms:
+                    exposed = add_phone_terms(chunk, phone_terms, exposed)
+                break
+
+        return exposed
 
     # -------------------------------------------------------------- matching
     def _search_terms(self) -> tuple[set[str], set[str]]:
@@ -168,36 +259,83 @@ class EvidenceAgent:
 
         def history(field_name: str) -> set[str]:
             rows = log[log["field_name"] == field_name]
-            return {_clean(v) for v in pd.concat([rows["old_value"], rows["new_value"]])} - {""}
+            return {
+                clean_str(v) for v in pd.concat([rows["old_value"], rows["new_value"]])
+            } - {""}
 
-        emails = {e.lower() for e in ({_clean(ident["email"])} | history("email")) if e}
-        hashes = {h.lower() for h in ({_clean(ident["email_hash"])} | history("email_hash")) if h}
+        emails = {
+            e.lower() for e in ({clean_str(ident["email"])} | history("email")) if e
+        }
+        hashes = {
+            h.lower()
+            for h in ({clean_str(ident["email_hash"])} | history("email_hash"))
+            if h
+        }
         hashes |= {hashlib.sha256(e.encode()).hexdigest() for e in emails}
-        phones = {re.sub(r"\D", "", p) for p in ({_clean(ident["phone"])} | history("phone")) if p}
+        phones = {
+            re.sub(r"\D", "", p)
+            for p in ({clean_str(ident["phone"])} | history("phone"))
+            if p
+        }
 
-        text_terms = {_clean(ident["user_id"]).lower()} | emails | hashes
+        text_terms = {clean_str(ident["user_id"]).lower()} | emails | hashes
         return text_terms - {""}, {p for p in phones if len(p) >= 7}
 
     def _mentions_user(self, text: str) -> bool:
+        r"""
+        Instead of loose substring searches (which cause false positives), the
+        agent:
+        Resolves current and historical identities (emails, email hashes, phone
+        numbers, and user IDs) from user_identities.csv and user_audit_log.csv.
+        Uses negative lookaheads and lookbehinds in regular expressions
+        ((?<![\w.+-])) to ensure exact token boundaries. For example, searching
+        for user_01 will successfully match, but will not falsely trigger on
+        user_010.
+        """
+
         text_terms, phone_terms = self._terms
         low = text.lower()
         for term in text_terms:
             # whole-token match: 'user_01' must not match 'user_010', 'amina@x.com' not 'jamina@x.com'
             if re.search(rf"(?<![\w.+-]){re.escape(term)}(?![\w-]|\.\w)", low):
                 return True
+
         if phone_terms:
             found = {re.sub(r"\D", "", p) for p in PHONE_RE.findall(text)}
             return bool(found & phone_terms)
+
         return False
 
     def _filter(self, evidence_list: list[dict]) -> list[dict]:
         """Files with at least one chunk that mentions the user (each file once)."""
         self._terms = self._search_terms()
-        return [f for f in evidence_list if any(self._mentions_user(c) for c in self._chunks(f["content"]))]
+        return [
+            f
+            for f in evidence_list
+            if any(self._mentions_user(c) for c in self._chunks(f["content"]))
+        ]
 
     def _chunks(self, content) -> list[str]:
-        """Split content into units where co-occurrence means 'same record'."""
-        if isinstance(content, dict) and content and all(isinstance(v, pd.DataFrame) for v in content.values()):
+        """
+        Split content into units where co-occurrence means 'same record'.
+        Different files store data differently (SQL tables vs. JSON trees vs.
+        raw log lines). The agent breaks files into logical "chunks" so that
+        finding a user identifier right next to a resource ID in the same chunk
+        proves they belong together:
+        SQL (.sql): Converts every table row into a self-contained JSON string
+        chunk.
+        JSON (.json): Recursively drills down into nested dictionaries to extract
+        individual records.
+        Logs/Text (.log, .txt): Groups log lines sharing the same trace_id
+        together so that a distributed transaction trace is evaluated as a
+        single unit.
+
+        """
+        if (
+            isinstance(content, dict)
+            and content
+            and all(isinstance(v, pd.DataFrame) for v in content.values())
+        ):
             return [  # SQL: one chunk per row, every row (no display truncation)
                 json.dumps({"_table": table, **row}, default=str)
                 for table, df in content.items()
@@ -205,7 +343,9 @@ class EvidenceAgent:
             ]
         if isinstance(content, (dict, list)):
             records = list(self._json_records(content))
-            return [json.dumps(r, default=str) for r in records] or [json.dumps(content, default=str)]
+            return [json.dumps(r, default=str) for r in records] or [
+                json.dumps(content, default=str)
+            ]
         return self._text_chunks(str(content))
 
     def _json_records(self, node):
@@ -241,13 +381,9 @@ class EvidenceAgent:
                 if rec.get("resource_id") and system:
                     counts[prefix_of(str(rec["resource_id"]))][system] += 1
         mapping = {p: c.most_common(1)[0][0] for p, c in counts.items()}
+
         # Prefixes not present in JSON evidence (single owner in system_activity)
-        for p, system in {
-            "cache": "cache_service",
-            "email_delivery": "email_delivery_service",
-            "marketing": "marketing_platform",
-            "tombstone": "identity_service",
-        }.items():
+        for p, system in TARGET_SYSTEMS.items():
             mapping.setdefault(p, system)
         return mapping
 
@@ -260,6 +396,7 @@ class EvidenceAgent:
             if not filepath.exists():
                 print(f"🚨 Error: {filepath} does not exist.")
                 continue
+
             evidence.append(
                 {
                     "file_id": evidence_file["file_id"],
@@ -272,6 +409,18 @@ class EvidenceAgent:
         return evidence
 
     def _read_evidence(self, path: Path):
+        """
+        It includes all the robust readers we discussed earlier:
+        _read_pdf: Extracts text page-by-page using PdfReader.
+        _read_log_or_text: Reads raw text with UTF-8 fallback error handling.
+        _read_json: Loads structured JSON payloads.
+        _read_image: Runs Tesseract OCR (pytesseract) to pull text out of
+        screenshots or image artifacts.
+        _read_sql: Safely spins up an in-memory SQLite database (:memory:),
+        executes the SQL script via executescript(), and pulls every table
+        into a clean Pandas DataFrame.
+        """
+
         if path in self._content_cache:
             return self._content_cache[path]
 
@@ -294,7 +443,9 @@ class EvidenceAgent:
 
     @staticmethod
     def _read_pdf(filepath: Path) -> str:
-        return "\n".join(p.extract_text() or "" for p in PdfReader(filepath).pages).strip()
+        return "\n".join(
+            p.extract_text() or "" for p in PdfReader(filepath).pages
+        ).strip()
 
     @staticmethod
     def _read_log_or_text(filepath: Path) -> str:
@@ -322,8 +473,13 @@ class EvidenceAgent:
             conn.executescript(filepath.read_text(encoding="utf-8"))
             tables = [
                 r[0]
-                for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+                )
             ]
-            return {t: pd.read_sql_query(f'SELECT * FROM "{t}"', conn, dtype=str) for t in tables}
+            return {
+                t: pd.read_sql_query(f'SELECT * FROM "{t}"', conn, dtype=str)
+                for t in tables
+            }
         finally:
             conn.close()

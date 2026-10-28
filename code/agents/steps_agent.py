@@ -1,9 +1,11 @@
 # code/agent/steps_agent.py
-# +---------------------------------------------------------------------------+
-# |                                 STEPS AGENT                               |
-# +---------------------------------------------------------------------------+
 
 """
++-----------------------------------------------------------------------------+
+|                                   STEPS AGENT                               |
++-----------------------------------------------------------------------------+
+
+
 | `steps_json` | Ordered JSON array of findings, remediation actions, and verification checks |
 
 The final file must contain exactly 518 data rows, sorted by `case_id`.
@@ -55,21 +57,56 @@ The grader parses `steps_json` as JSON. JSON object-key order and whitespace are
 | `VERIFICATION` | `VERIFY_RESTORE_BLOCKED` | `BLOCKED` | Confirm that the affected data cannot be restored. |
 """
 
-
-# from src.enums import StepPhrases, StepOperations, StepStates
+import json
 
 
 class StepsAgent:
     def __init__(self):
-        self.step_no = None
-        self.phase = None
-        self.system_id = None
-        self.resource_id = None
-        self.operation = None
-        self.state = None
-        self.evidence_id = None
+        self._data = []
 
-    def generate(self) -> dict:
+    def add(
+        self,
+        phase: str,
+        system_id: str,
+        resource_id: str,
+        operation: str,
+        state: str,
+        evidence_id: str,
+    ) -> None:
+        """Helper to append individual step components."""
+        self._data.append(
+            {
+                "phase": phase,
+                "system_id": system_id,
+                "resource_id": resource_id,
+                "operation": operation,
+                "state": state,
+                "evidence_id": evidence_id if evidence_id is not None else "",
+            }
+        )
 
-        # Update attributes
-        return self.__dict__
+    def compile(self) -> str:
+        """
+        Compiles all added steps, enforces consecutive numbering starting and
+        retrus the final JSON string for steps_json.
+        Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
+        """
+
+        if not self._data:
+            return json.dumps([])
+
+        steps = []
+        for idx, item in enumerate(self._data, start=1):
+            steps.append(
+                {
+                    "step_no": idx,
+                    "phrase": item["phrase"],
+                    "system_id": item["system_id"],
+                    "resource_id": item["resource_id"],
+                    "operation": item["operation"],
+                    "state": item["state"],
+                    "evidence_id": item["evidence_id"],
+                }
+            )
+
+        return json.dumps(steps)

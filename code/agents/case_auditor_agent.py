@@ -14,22 +14,21 @@ Audits each case and finalizes the resolution, and returns the solution
 import json
 
 # Vendor Libraries
-
 import pandas as pd
+from agents.deletion_rule_agent import DeletionRuleAgent
+from agents.evidence_agent import EvidenceAgent
 
 # Local Libraries
 from agents.steps_agent import StepsAgent
-from agents.deletion_rule_agent import DeletionRuleAgent
-from agents.evidence_agent import EvidenceAgent
 from models.llm_model import LlmModel
 from src.constants import (
+    DATE_FORMAT,
     DATETIME_DURATION,
     NON_DELETION_KEYWORDS,
     VALID_KEYPHRASES,
     VALIDITY_PROMPT,
 )
-from src.enums import DeletionStatus, ReportedStatus
-from src.prompt_builder import PromptBuilder
+from src.enums import DeletionStatus
 
 
 class CaseAuditorAgent:
@@ -66,23 +65,19 @@ class CaseAuditorAgent:
 
             if user_dataset.get("user_identity") is None:
                 deletion_status = DeletionStatus.COMPLETE
-                evidence_dataset = {}
+                evidence_findings = []
             else:
-                evidence_dataset = self._analyze(user_dataset)
+                evidence_findings = self._analyze(user_dataset)
                 user_evidence_dataset = user_dataset
-                user_evidence_dataset["evidence"] = evidence_dataset
+                user_evidence_dataset["evidence"] = evidence_findings
 
                 # user_evidence_dataset = {**user_dataset, **evidence_dataset}
 
                 # With results lets build a prompt and get a response to determine final DeletionStatus
-                builder = PromptBuilder(user_evidence_dataset, case_s)
-                deletion_status = self._get_deletion_status(builder.prompt)
+                # @deprecated - builder = PromptBuilder(user_evidence_dataset, case_s)
+                deletion_status = self._get_deletion_status(evidence_findings)
 
-            # @TODO - Apply Rules here?
-            results = self._rules_agent.apply()
             steps_json = self._finalize(deletion_status)
-
-        # Build Prompt
 
         return self._get_output(deletion_status, steps_json)
 
@@ -98,25 +93,28 @@ class CaseAuditorAgent:
             return True
 
         # If keywords or keyphrases can't determine ability use the LLM model
-        prompt = VALIDITY_PROMPT.format(text=self.response_text)
+        prompt = VALIDITY_PROMPT.format(request_text=self.request_text)
         print("Validity still unknown.  Asking model...")
         response = self._model.get_response(prompt)
+
         return response.strip().lower() in ("true", "yes", "1")
 
     def _analyze(self, user_dataset: dict) -> dict:
         """Uncover the Truth: Look past what the company's dashboard claims
         ("Complete!") and check the actual evidence files (such as database
         snapshots, logs, and support tickets) to see if personal data is still
-        lingering somewhere it shouldn't be."""
+        lingering somewhere it shouldn't be.
 
-        # Search global logs (system_activity.csv), evidence files, databases,
-        # backups, or exports around or before audit_at (2026-09-03T11:30:00Z)
-        # to see if any residual data or recreation risks exist, comparing
-        # findings against deletion_rules.csv.
+        Search global logs (system_activity.csv), evidence files, databases,
+        backups, or exports around or before audit_at (2026-09-03T11:30:00Z)
+        to see if any residual data or recreation risks exist, comparing
+        findings against deletion_rules.csv.
+        """
 
-        evidence_dataset = self._evidence_agent.search(user_dataset)
+        # Return dict of type list[ResourceFinding]
+        findings = self._evidence_agent.search(user_dataset, self._rules_agent)
 
-        return evidence_dataset
+        return {"findings": findings}
 
     def _filter_by_user(self) -> dict:
         """Resolve Identities: Match current and historical names, emails, and
@@ -139,7 +137,9 @@ class CaseAuditorAgent:
             user_identities_df["email"].str.lower() == email
         ]
         if user_identity.empty:
-            email_changes = user_audit_log_df[user_audit_log_df["field_name"] == "email"]
+            email_changes = user_audit_log_df[
+                user_audit_log_df["field_name"] == "email"
+            ]
             historical = email_changes[
                 (email_changes["old_value"].str.lower() == email)
                 | (email_changes["new_value"].str.lower() == email)
@@ -200,15 +200,15 @@ class CaseAuditorAgent:
         never later than audit_at."""
         reported_at = pd.Timestamp(self.reported_at)
         delta = pd.Timedelta(minutes=DATETIME_DURATION)
-        fmt = "%Y-%m-%dT%H:%M:%SZ"
-        earliest = (reported_at - delta).strftime(fmt)
-        latest = min((reported_at + delta).strftime(fmt), self.audit_at)
+        earliest = (reported_at - delta).strftime(DATE_FORMAT)
+        latest = min((reported_at + delta).strftime(DATE_FORMAT), self.audit_at)
 
         return system_activity_df[
             system_activity_df["event_time"].between(earliest, latest)
         ]
 
-    def _get_deletion_status(self, prompt: str) -> str:
+    def _get_deletion_status(self, evidence_findings: list) -> str:
+        # @TODO - needs work
         """For each case, your program has to output one of three statuses:
 
         - COMPLETE:
@@ -222,17 +222,27 @@ class CaseAuditorAgent:
         - NOT_APPLICABLE:
         The user didn't actually request a deletion."""
 
-        response = self._model.get_response(prompt)
+        deletion_status = None
+
+        # response_deletion_staus = self._model.get_response(prompt)
 
         # Determine what the DeletionStatus will be based on response
         # Only return one of three choices
 
-        if response in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
-            return response
+        deletion_status = self._rules_agent.evaluate(evidence_findings)
 
-        return DeletionStatus.NOT_APPLICABLE
+        # @TODO - Do additional logic to check rules deletion status
 
-    def _finalize(self, deletion_status: str) -> dict:
+        # With the LLM response and evaluating the deletion rules lets determine
+        # the final deletion status
+
+        # if response in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
+        # self._rules_agent.apply(evidence_findings)
+        #    return response
+
+        return deletion_status
+
+    def _finalize(self, deletion_status: str) -> str:
         """Delivering the Solution
         Your solution must process all the data and generate a final file called
         output.csv.
@@ -256,10 +266,17 @@ class CaseAuditorAgent:
         ```
         """
 
-        steps_json = {}
-
         if deletion_status in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
-            steps_json = self._steps_agent.generate()
+            self._steps_agent.add(
+                phase=None,  # StepPhrases.VERIFICATION,
+                system_id=None,
+                resource_id=None,
+                operation=None,  # StepOperations.__
+                state=None,  # StepStates._
+                evidence_id=None,
+            )
+
+        steps_json = self._steps_agent.compile()
 
         return steps_json
 

@@ -3,6 +3,7 @@
 # IDE & OS Files
 .DS_Store
 .idea
+.pytest_cache
 .vscode
 
 # Python

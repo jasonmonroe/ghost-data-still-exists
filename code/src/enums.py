@@ -56,3 +56,4 @@ class StepStates(Enum):
     REDACTED = "REDACTED"
     ANONYMIZED = "ANONYMIZED"
     BLOCKED = "BLOCKED"
+    UNKNOWN = "UNKNOWN"  # non-official
