@@ -19,7 +19,7 @@ class DataHandler:
         self.deletion_rules = None
         self.evidence_files = None
         self.output = None
-        self.sample_deletion_request = None
+        self.sample_deletion_requests = None
         self.sample_output = None
         self.system_activity = None
         self.user_audit_log = None
@@ -41,9 +41,9 @@ class DataHandler:
         # Override output if using sample
         if USE_SAMPLE in [True, "True"]:
             self.output = self.sample_output
-            self.deletion_requests = self.sample_deletion_request
+            self.deletion_requests = self.sample_deletion_requests
 
-            print(f"ℹ️ Using sample data.\n {len(self.deletion_request)} rows")
+            print(f"ℹ️ Using sample data.\n {len(self.deletion_requests)} rows")
 
     def _load_evidence(self) -> dict:
         # @TODO - might not even need this function.  I can use evidence_files.csv on demand

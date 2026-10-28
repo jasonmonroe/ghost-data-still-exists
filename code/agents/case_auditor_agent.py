@@ -14,11 +14,11 @@ Audits each case and finalizes the resolution, and returns the solution
 import json
 
 # Vendor Libraries
-from code.agents.steps_agent import StepsAgent
 
 import pandas as pd
 
 # Local Libraries
+from agents.steps_agent import StepsAgent
 from agents.deletion_rule_agent import DeletionRuleAgent
 from agents.evidence_agent import EvidenceAgent
 from models.llm_model import LlmModel
@@ -103,7 +103,7 @@ class CaseAuditorAgent:
         response = self._model.get_response(prompt)
         return response.strip().lower() in ("true", "yes", "1")
 
-    def _analevyze(self, user_dataset: dict) -> dict:
+    def _analyze(self, user_dataset: dict) -> dict:
         """Uncover the Truth: Look past what the company's dashboard claims
         ("Complete!") and check the actual evidence files (such as database
         snapshots, logs, and support tickets) to see if personal data is still
@@ -133,12 +133,22 @@ class CaseAuditorAgent:
         user_audit_log_df = self._data.get("user_audit_log")
         system_activity_df = self._data.get("system_activity")
 
-        # Find user by email
+        # Find user by current email, then by historical email in the audit log
+        email = self.email.strip().lower()
         user_identity = user_identities_df[
-            user_identities_df["email"].str.lower() == self.email.lower()
+            user_identities_df["email"].str.lower() == email
         ]
+        if user_identity.empty:
+            email_changes = user_audit_log_df[user_audit_log_df["field_name"] == "email"]
+            historical = email_changes[
+                (email_changes["old_value"].str.lower() == email)
+                | (email_changes["new_value"].str.lower() == email)
+            ]
+            user_identity = user_identities_df[
+                user_identities_df["user_id"].isin(historical["user_id"])
+            ]
 
-        if len(user_identity) != 0:
+        if len(user_identity) != 1:
             # Return the unfiltered datasets
             print(
                 f"Warning: Case: {self.case_id} User {self.email} unknown or multiple users returned."
@@ -177,56 +187,26 @@ class CaseAuditorAgent:
         # Returning filtered data
         return {
             "evidence_files": evidence_files,
-            "system_activity": system_activity,
+            "system_activity": system_activity,  # this case's workflow window
+            "activity_pool": system_activity_df[  # everything <= audit_at (timelines)
+                system_activity_df["event_time"] <= self.audit_at
+            ],
             "user_audit_log": user_audit_log,
             "user_identities": user_identity,
         }
 
     def _filter_system_activity(self, system_activity_df: pd.DataFrame) -> pd.DataFrame:
+        """This case's own workflow events: reported_at +/- DATETIME_DURATION minutes,
+        never later than audit_at."""
+        reported_at = pd.Timestamp(self.reported_at)
+        delta = pd.Timedelta(minutes=DATETIME_DURATION)
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        earliest = (reported_at - delta).strftime(fmt)
+        latest = min((reported_at + delta).strftime(fmt), self.audit_at)
 
-        def _delta(op: str) -> str:
-            reported_at = pd.Timestamp(self.reported_at)
-            delta = pd.Timedelta(minutes=DATETIME_DURATION)
-            expr = (f"{reported_at} {op} {delta}").strftime("%Y-%m-%dT%H:%M:%SZ")
-
-            return eval(expr)
-
-        # Filter system activity by timestamp
-        # Only consider activity events.event_time occuring on or BEFORE
-        # user_identities.audit_at
-        system_activity_df = system_activity_df[
-            system_activity_df["event_time"].between(
-                self.requested_at, self.reported_at
-            )
+        return system_activity_df[
+            system_activity_df["event_time"].between(earliest, latest)
         ]
-
-        # Narrow the window further if reported status complete
-        # Use +- 10 minutes for all activities around this datetime
-        # target_system = None
-        if self.reported_status == ReportedStatus.COMPLETE:
-            earliest_activity = _delta("-")
-            latest_activity = _delta("+")
-
-            # pd_timestamp = pd.Timestamp(self.reported_at)
-
-            # earliest_activity = (
-            #    pd_timestamp - pd.Timedelta(minutes=DATETIME_DURATION)
-            # ).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-            # latest_activity = (
-            #    pd_timestamp + pd.Timedelta(minutes=DATETIME_DURATION)
-            # ).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-            system_activity_df = system_activity_df[
-                system_activity_df["event_time"].between(
-                    earliest_activity, latest_activity
-                )
-            ]
-
-            # if len(system_activity) == 1:
-            # target_system = system_activity.iloc[0]["target_system"]
-
-            return system_activity_df
 
     def _get_deletion_status(self, prompt: str) -> str:
         """For each case, your program has to output one of three statuses:
