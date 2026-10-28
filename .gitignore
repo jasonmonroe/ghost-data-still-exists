@@ -1,10 +1,20 @@
 # .gitignore
 
+# IDE & OS Files
 .DS_Store
-.env
-
 .idea
-.venv
 .vscode
 
-__pycache__
+# Python
+.venv
+venv/
+__pycache__/
+*.py[cod]
+
+# Secrets & Local Environment
+.env
+
+# Project Artifacts
+output.csv
+code.zip
+agent-trace.zip

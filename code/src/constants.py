@@ -5,6 +5,7 @@
 
 
 import os
+import re
 from pathlib import Path
 
 # Constants for the application
@@ -41,6 +42,23 @@ MAX_TOKENS = 2048
 DATETIME_DURATION = 10
 RATE_LIMIT_PAUSE_TIMER = 3
 RATE_LIMIT_RETRIES = 4
+
+RESOURCE_ID_RE = re.compile(
+    r"\b(?:account|search|analytics|support|cache|export|email_delivery|audit_record"
+    r"|data_flow|backup|tombstone|legal_hold|marketing)_\d+\b"
+)
+
+SYSTEM_BY_PREFIX = {  # resource prefix → output system_id
+    "account": "account_service",
+    "search": "search_service",
+    "support": "support_platform",
+    "analytics": "analytics_platform",
+    "audit_record": "security_service",
+    "data_flow": "integration_service",
+    "backup": "backup_service",
+    "export": "export_service",
+    "tombstone": "identity_service",
+}
 
 
 # Case
