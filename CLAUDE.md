@@ -90,54 +90,45 @@ code/
   (it hijacks Claude Code billing).
 - No `eval()`. Read CSVs with `dtype=str` where IDs/phones matter.
 
-## Current status / next steps
+## Current status / next steps (handoff 2026-10-29)
 
-- EvidenceAgent works on sample cases: case_01, case_02 → `account_00x` ABSENT `evidence_54`;
-  case_05 → `account_005` PRESENT `evidence_54` (failover replica copy).
-- Known issue: workflow window adds noise (case_01 also returns `cache_7537`, UNKNOWN). Try limiting
-  to deletion-type events and measure across all 32 samples.
-- TODO in `ResourceFinding`: `category` (prefix → data_category), `exposed_fields`, `attributes`
-  (`enabled`, `restore_allowed`, `retention_until`).
-- Then: DeletionRuleAgent → StepsAgent → wire `_get_output` (currently `json.load` on a list),
-  remove `sys.exit(0)` in the pipeline loop, evaluation + usage reports.
+### Works
+- Full pipeline runs on all 32 sample cases with 0 errors (LLM stubbed in test harness):
+  24 COMPLETE / 8 INCOMPLETE (COMPLETE is inflated by issue 1 below).
+- EvidenceAgent returns `ResourceFinding`s; `case_01`/`case_02` → `VERIFY_RECORD_ABSENT` citing
+  `evidence_54`; `case_05` → `account_005` PRESENT in failover replica → `DELETE_RECORD`.
+- `StrEnum` enums; new `StepsAgent` per case; `compile()` sorts by phase then operation order;
+  UNKNOWN findings skipped; FINDING steps only for violations; `account_` → `USER_PROFILE`.
 
-  account_ → USER_PROFILE. case_05 now remediates with DELETE_RECORD → VERIFY_RECORD_ABSENT. 🎉
+### Fix next (priority order)
+1. **`CATEGORY_BY_PREFIX` names must match `deletion_rules.csv` exactly.** Wrong today:
+   `analytics`→`ANALYTICS_PROFILE`, `backup`→`BACKUP_ARCHIVE`, `cache`→`CACHE_ENTRY`,
+   `marketing`→`MARKETING_PROFILE`, `search`→`SEARCH_INDEX_ENTRY`, `support`→`SUPPORT_MESSAGE`
+   (attachments `SUPPORT_ATTACHMENT`); add `legal_hold`→`LEGAL_HOLD_RECORD`. Unknown name → no rule →
+   silently COMPLETE (e.g. `case_11` search records PRESENT but COMPLETE). Add a startup check in
+   `DeletionRuleAgent` that raises if a mapped category (except `data_flow`) is not in the rules file.
+2. **Finding operation comes from the rule action**, not `exposed_fields`:
+   DELETE → `REPORT_REMAINING_RECORD`; REDACT/ANONYMIZE → `REPORT_EXPOSED_PII`
+   (`case_05` currently emits `REPORT_EXPOSED_PII` for a DELETE record).
+3. **Data flows and backups are processes, not records.** Read real `enabled`
+   (`connector_subscriptions`) and `restore_allowed` (`backup_restore_entries`) instead of the
+   hardcoded attributes. Flow enabled → `REPORT_ACTIVE_DATA_FLOW` → `DISABLE_DATA_FLOW` →
+   `VERIFY_DATA_FLOW_DISABLED`; backup restorable → `REPORT_RESTORE_RISK` → `BLOCK_RESTORE` →
+   `VERIFY_RESTORE_BLOCKED`; already safe → verification with evidence.
+4. **Open question — RETAIN semantics.** `case_17` is COMPLETE while verifying a RETAIN audit record
+   and a tombstone as ABSENT. Decide: "records that must be retained remain available".
+5. **Field-level `exposed_fields`**: personal-data columns still non-empty on the proof record
+   (name, email, phone, email_hash, requester_*, owner_*, customer_email, display_name). Leave
+   reference fields (user_id / subject_reference / customer_reference) to the rule agent per category.
+6. **Real LLM path (not exercised by the stubbed harness):** `print(json.dumps(response))` fails on SDK
+   objects; `json.loads("True")` fails; `_check_validity` calls `.strip()` on a bool/dict; drop the
+   `google_search` tool for classification; Interactions API usage fields are `total_input_tokens`,
+   `total_output_tokens`, `total_tokens` (verify on one real response); `response.model` unconfirmed.
+   ~28/32 validity checks currently fall through to the LLM.
+7. Workflow window noise: same records appear for different users (`account_9335` in cases 13/18/20).
+8. `_filter_by_user` fallback returns ALL identities when no user matches → wrong user via `.iloc[0]`.
+9. Then: sample scorer → `evaluation/evaluation_report.md`; `usage_report.md`; full 518 run; README.
 
-## 🔴 Six category names don't exist in `deletion_rules.csv`
-
-Your `CATEGORY_BY_PREFIX` map is the right idea, but six values are close to the real names, not exactly them:
-
-| Prefix | Your value | Actual name in the rules file |
-|---|---|---|
-| `analytics` | `ANALYTICS_RECORD` | **`ANALYTICS_PROFILE`** |
-| `backup` | `BACKUP_RESTORE_RISK` | **`BACKUP_ARCHIVE`** |
-| `cache` | `CACHE_RECORD` | **`CACHE_ENTRY`** |
-| `marketing` | `MARKETING_LIST` | **`MARKETING_PROFILE`** |
-| `search` | `SEARCH_INDEX` | **`SEARCH_INDEX_ENTRY`** |
-| `support` | `SUPPORT_TICKET` | **`SUPPORT_MESSAGE`** (attachments: `SUPPORT_ATTACHMENT`) |
-| `legal_hold` | *(missing)* | **`LEGAL_HOLD_RECORD`** |
-
-A name that doesn't exist → no rule found → `evaluate()` returns **COMPLETE**.
-
-You can see it in `case_11`, which went from INCOMPLETE to **COMPLETE** while three search records are still PRESENT:
-
-```text
-5 VERIFICATION search_service search_052  VERIFY_RECORD_PRESENT PRESENT   ← DELETE rule; should be a finding
-```
-
-That's why COMPLETE jumped from 19 to 24.
-
-**Suggestion:** make this kind of mistake impossible to miss. When `DeletionRuleAgent` starts, check that every category in the map (except `data_flow`, which is a process) actually exists in the rules file, and raise an error if one doesn't. One typo then becomes a crash at startup instead of quietly wrong statuses.
-
-## 🟠 Wrong finding type for DELETE records
-
-```text
-case_05  1 FINDING  account_005  REPORT_EXPOSED_PII  ← should be REPORT_REMAINING_RECORD
-```
-
-`add_finding_phase` picks the operation based on `exposed_fields`. It should depend on the **rule's action**:
-
-- **DELETE** → `REPORT_REMAINING_RECORD` (the whole record shouldn't exist)
-- **REDACT / ANONYMIZE** → `REPORT_EXPOSED_PII` (the record can stay, but its fields can't)
-
-**Hint:** you already pass `required_action` into the remediation step. Pass it into the finding step too.
+### Way of working
+- Jason writes the code in his own style; Claude explains logic, gives hints (hint ladder), runs the
+  code and reviews. Ignore methods marked `@depracated` / `@deprecated`.

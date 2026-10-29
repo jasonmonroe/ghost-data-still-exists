@@ -35,7 +35,6 @@ class LlmModel:
                     system_instruction=SYSTEM_INSTR_PROMPT,
                     model=MODEL_NAME,
                     input=prompt,
-                    # tools=[{"type": "google_search"}],
                     generation_config={
                         "max_output_tokens": MAX_TOKENS,
                         "temperature": 0.0,
@@ -83,8 +82,6 @@ class LlmModel:
                 output_tokens=response.usage.completion_tokens or 0,
                 prompt=prompt,
             )
-        else:
-            print()
 
         # Send content of response back to source
         content = response.output_text
