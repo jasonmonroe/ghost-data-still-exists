@@ -29,10 +29,10 @@ def run_case_audit_pipeline(dataset: dict):
     """
     for index, case_df in cases_df.iterrows():
         output = []
-        if index != 0:
-            import sys
+        # if index != 0:
+        #    import sys
 
-            sys.exit(0)
+        #    sys.exit(0)
 
         # print(case_df.to_dict())
         output = auditor.audit_by_case(case_df)

@@ -112,7 +112,7 @@ Requirements:
 ## [ISO-8601 TIMESTAMP] SESSION START
 
 tool=<exact_harness_or_coding_agent_name>
-model=<exact_runtime_model_name>
+model=<exact_runtime_GEMINI_MODEL_NAME>
 Repo Root: <absolute_path>
 Branch: <git_branch_or_unknown>
 Worktree: <worktree_path_or_main>
@@ -139,7 +139,7 @@ Actions:
 
 Context:
 tool=<exact_harness_or_coding_agent_name>
-model=<exact_runtime_model_name>
+model=<exact_runtime_GEMINI_MODEL_NAME>
 branch=<git_branch_or_unknown>
 repo_root=<absolute_path>
 worktree=<worktree_path_or_main>

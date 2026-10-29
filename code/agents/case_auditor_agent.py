@@ -95,12 +95,23 @@ class CaseAuditorAgent:
         if any(phrase in text for phrase in VALID_KEYPHRASES):
             return True
 
-        # If keywords or keyphrases can't determine ability use the LLM model
+        print("Validity still unknown. Asking model...")
         prompt = VALIDITY_PROMPT.format(request_text=self.request_text)
-        print("Validity still unknown.  Asking model...")
+
         response = self._model.get_response(prompt)
 
-        return response.strip().lower() in ("true", "yes", "1")
+        if isinstance(response, bool):
+            return response
+
+        if isinstance(response, dict):
+            if response.get("error"):
+                print(
+                    "⚠️ Warning: LLM call failed with error. Defaulting validity to False."
+                )
+                return False
+            return False
+
+        return str(response).strip().lower() in ("true", "yes", "1")
 
     def _analyze(self, user_dataset: dict) -> list[ResourceFinding]:
         """Uncover the Truth: Look past what the company's dashboard claims
@@ -151,7 +162,7 @@ class CaseAuditorAgent:
         if len(user_identity) != 1:
             # Return the unfiltered datasets
             print(
-                f"Warning: Case: {self.case_id} User {self.email} unknown or multiple users returned."
+                f"⚠️ Warning: Case: {self.case_id} User {self.email} unknown or multiple users returned."
             )
 
             return {
@@ -179,7 +190,7 @@ class CaseAuditorAgent:
         # Returning filtered data
         return {
             "evidence_files": evidence_files,
-            "system_activity": system_activity,  # this case's workflow window
+            "system_activity": system_activity,
             "activity_pool": system_activity_df[  # everything <= audit_at (timelines)
                 system_activity_df["event_time"] <= self.audit_at
             ],
@@ -280,13 +291,13 @@ class CaseAuditorAgent:
 
         ```json
         {
-        "step_no": 1,
-        "phase": "FINDING",
-        "system_id": "account_service",
-        "resource_id": "account_005",
-        "operation": "REPORT_REMAINING_RECORD",
-        "state": "PRESENT",
-        "evidence_id": "evidence_01"
+            "step_no": 1,
+            "phase": "FINDING",
+            "system_id": "account_service",
+            "resource_id": "account_005",
+            "operation": "REPORT_REMAINING_RECORD",
+            "state": "PRESENT",
+            "evidence_id": "evidence_01"
         }
         ```
         """
@@ -310,11 +321,11 @@ class CaseAuditorAgent:
 
             # REMEDIATION and VERIFICATION PHASE (Only if incomplete)
             if is_incomplete:
-                self._steps_agent.add_finding_phase(finding)
+                self._steps_agent.add_finding_phase(finding, required_action)
                 self._steps_agent.add_remediation_phase(finding, required_action)
-
                 self._steps_agent.set_verify_incomplete(required_action)
                 self._steps_agent.add_verification_phase(finding)
+
             else:
                 self._steps_agent.set_verify_complete(finding)
                 self._steps_agent.add_verification_phase(finding)

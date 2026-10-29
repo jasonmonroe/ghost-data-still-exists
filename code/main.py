@@ -1,6 +1,11 @@
 # /code/main.py
 
 """
++-----------------------------------------------------------------------------+
+|                            GHOST DATA STILL EXISTS                          |
++-----------------------------------------------------------------------------+
+
+
 This project (Ghost Data Still Exists) is an audit challenge that simulates a
 major real-world data privacy problem: When a user asks a company to delete
 their personal data, companies often think they’ve erased everything, but
@@ -55,28 +60,25 @@ For Complete or Incomplete cases, your code must output a structured list of
 steps (steps_json) detailing what findings were made, what remediation steps are
  needed to clean up the ghost data, and what verification checks must pass to
  make sure it stays gone.
+"""
 
 __author__ = "Jason Monroe (jason@jasonmonroe.com)"
 __copyright__ = "Copyright © 2011-2026 Monroe Labs Co."
 __date__ = "2026-10-25"
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
-"""
 
 from dotenv import load_dotenv
-from src.constants import APP_NAME
+
+load_dotenv()
 
 # Python Libraries
-
-load_dotenv("../.env")
-
-# Python Libraries
-
 import warnings
 
 # Local Libraries
 from evaluation.main import main as run_evaluation_pipeline
 from pipelines.run_case_audit_pipeline import run_case_audit_pipeline
+from src.constants import APP_NAME
 from src.data_handler import DataHandler
 from src.utils import banner, get_run_id, show_time, start_timer, stop_timer
 

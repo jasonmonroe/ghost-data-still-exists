@@ -111,11 +111,6 @@ class EvidenceAgent:
 
         return findings
 
-        # return [
-        #    self._build_finding(rid, all_evidence, rules_agent)
-        #    for rid in sorted(resource_ids)
-        # ]
-
     def _get_resources(self, matched: list[dict]) -> set[str]:
         """
         Pass filtered evidence in and get the resource data from system activities.
@@ -252,18 +247,15 @@ class EvidenceAgent:
 
     @staticmethod
     def _inspect_chunk_for_personal_info(chunk, exposed: set[str]) -> None:
-        """Helper to parse a chunk as a dict and check PII field keys directly."""
         try:
             record = json.loads(chunk) if isinstance(chunk, str) else chunk
             if isinstance(record, dict):
-                # Check each PII field in the record dict
                 for field in PERSONAL_INFO_FIELDS:
                     value = record.get(field)
-                    # A field is exposed if it exists and is not null/empty
                     if value not in (None, "", "null"):
                         exposed.add(field)
         except (json.JSONDecodeError, TypeError):
-            pass
+            print("🚨 Error: Data not decoded.")
 
     # @depracated
     def _get_exposed3(

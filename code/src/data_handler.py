@@ -8,7 +8,6 @@ import pandas as pd
 from src.constants import (
     DATASET_FILES,
     DATASET_PATH,
-    EVIDENCE_PATH,
     USE_SAMPLE,
 )
 
@@ -43,22 +42,7 @@ class DataHandler:
             self.output = self.sample_output
             self.deletion_requests = self.sample_deletion_requests
 
-            print(f"ℹ️ Using sample data.\n {len(self.deletion_requests)} rows")
-
-    def _load_evidence(self) -> dict:
-        # @TODO - might not even need this function.  I can use evidence_files.csv on demand
-        # Just load the filenames do not read until ready for reading
-
-        # Map each evidence subdirectory name to its sorted file paths.
-        self.evidence = {
-            sub_dir.name: sorted(
-                path
-                for path in sub_dir.iterdir()
-                if path.is_file() and not path.name.startswith(".")
-            )
-            for sub_dir in sorted(EVIDENCE_PATH.iterdir())
-            if sub_dir.is_dir()
-        }
+            print(f"ℹ️ Using sample data.\n {len(self.deletion_requests)} rows.")
 
     def save(self, output_csv) -> None:
         # Save output csv file to dataset output file.

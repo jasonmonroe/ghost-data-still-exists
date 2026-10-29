@@ -56,6 +56,15 @@ class DeletionRuleAgent:
         self.condition = None
         self.required_action = None
 
+        # Startup fail-safe: Crash immediately on typo rather than returning silent COMPLETE
+        valid_categories = set(self.rules["data_category"].unique())
+        for prefix, cat in CATEGORY_BY_PREFIX.items():
+            if cat != "DATA_FLOW" and cat not in valid_categories:
+                raise ValueError(
+                    f"🚨 Startup Error: Mapped category '{cat}' for prefix '{prefix}' "
+                    f"does not exist in deletion_rules.csv!"
+                )
+
     # @depracated
     def get_category2(self, resource_id: str) -> str:
         """
@@ -79,6 +88,25 @@ class DeletionRuleAgent:
         return DEFAULT_RULE_CATEGORY  # fallback category
 
     def get_category(self, resource_id: str) -> str:
+        """Maps resource ID prefix cleanly to data category using explicit mapping."""
+        parts = resource_id.split("_")
+
+        # Check two-word prefixes first (e.g., audit_record, data_flow, email_delivery)
+        if len(parts) >= 3:
+            two_part_prefix = f"{parts[0]}_{parts[1]}"
+            if two_part_prefix in CATEGORY_BY_PREFIX:
+                self.data_category = CATEGORY_BY_PREFIX[two_part_prefix]
+                return self.data_category
+
+        single_prefix = parts[0]
+        if single_prefix in CATEGORY_BY_PREFIX:
+            self.data_category = CATEGORY_BY_PREFIX[single_prefix]
+            return self.data_category
+
+        return DEFAULT_RULE_CATEGORY
+
+    # @depracated
+    def get_category3(self, resource_id: str) -> str:
         """Maps resource ID prefix cleanly to data category using explicit mapping."""
         parts = resource_id.split("_")
 

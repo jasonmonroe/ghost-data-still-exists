@@ -86,7 +86,7 @@ code/
 - Deterministic output: sorted rows, stable step ordering, `json.dumps(..., sort_keys=True)`.
 - Step order: FINDING → REMEDIATION → VERIFICATION; within a phase by operation order in
   `problem_statement.md`, then `system_id`, then `resource_id`; `step_no` 1..n.
-- Secrets only from env vars / `.env` (`MODEL_API_KEY`). Never name an app key `ANTHROPIC_API_KEY`
+- Secrets only from env vars / `.env` (`GEMINI_API_KEY`). Never name an app key `ANTHROPIC_API_KEY`
   (it hijacks Claude Code billing).
 - No `eval()`. Read CSVs with `dtype=str` where IDs/phones matter.
 

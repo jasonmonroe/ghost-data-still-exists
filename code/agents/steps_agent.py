@@ -101,7 +101,27 @@ class StepsAgent:
         )
         self._verify_evidence = ""
 
-    def add_finding_phase(self, finding: ResourceFinding) -> None:
+    def add_finding_phase(self, finding: ResourceFinding, required_action: str) -> None:
+        if (
+            required_action
+            in (StepOperations.REDACT_RECORD, StepOperations.ANONYMIZE_RECORD)
+            and finding.exposed_fields
+        ):
+            op = StepOperations.REPORT_EXPOSED_PII
+        else:
+            op = StepOperations.REPORT_REMAINING_RECORD
+
+        self.add(
+            phase=StepPhrases.FINDING,
+            system_id=finding.system_id,
+            resource_id=finding.resource_id,
+            operation=op,
+            state=finding.state,
+            evidence_id=finding.evidence_id,
+        )
+
+    # @depracated
+    def add_finding_phase2(self, finding: ResourceFinding) -> None:
         op = (
             StepOperations.REPORT_EXPOSED_PII
             if finding.exposed_fields

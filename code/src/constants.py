@@ -14,9 +14,9 @@ from src.enums import StepOperations, StepStates
 # ============================================================================
 
 APP_NAME = os.getenv("APP_NAME")
-MODEL_NAME = os.getenv("MODEL_NAME")
-MODEL_API_KEY = os.getenv("MODEL_API_KEY")
-MODEL_API_URL = os.getenv("MODEL_API_URL")
+GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_ENDPOINT = os.getenv("GEMINI_API_ENDPOINT")
 USE_SAMPLE = os.getenv("USE_SAMPLE", "True")
 
 
@@ -90,20 +90,59 @@ ABSENT_HINT_RE = re.compile(
 # 5. MAPPINGS & DICTIONARIES
 # ============================================================================
 
+"""
+@TODO - old version
 CATEGORY_BY_PREFIX = {
     "account": "USER_PROFILE",
     "analytics": "ANALYTICS_RECORD",
     "audit_record": "SECURITY_AUDIT_LOG",
-    "backup": "BACKUP_RESTORE_RISK",
-    "cache": "CACHE_RECORD",
-    "data_flow": "ACTIVE_DATA_FLOW",
+    "backup": "BACKUP_RESTORE_RISK",  # @TODO was BACKUP_ARCHIVE
+    "cache": "CACHE_RECORD",  # @TODO was CACHE_ENTRY
+    "data_flow": "ACTIVE_DATA_FLOW", # @TODO was DATA_FLOW
     "email_delivery": "EMAIL_DELIVERY_LOG",
     "export": "USER_EXPORT",
-    "marketing": "MARKETING_LIST",
-    "search": "SEARCH_INDEX",
+    "legal_hold": "LEGAL_HOLD",
+    "marketing": "MARKETING_PROFILE",  # @TODO - was MARKETING_LIST
+    "search": "SEARCH_INDEX",  # @TODO was SEARCH_INDEX_ENTRY
     "support": "SUPPORT_TICKET",
     "tombstone": "ACCOUNT_TOMBSTONE",
 }
+"""
+
+CATEGORY_BY_PREFIX = {
+    "account": "USER_PROFILE",
+    "analytics": "ANALYTICS_PROFILE",
+    "audit_record": "SECURITY_AUDIT_LOG",
+    "backup": "BACKUP_ARCHIVE",
+    "cache": "CACHE_ENTRY",
+    "data_flow": "DATA_FLOW",
+    "email_delivery": "EMAIL_DELIVERY_LOG",
+    "export": "USER_EXPORT",
+    "legal_hold": "LEGAL_HOLD_RECORD",
+    "marketing": "MARKETING_PROFILE",
+    "search": "SEARCH_INDEX_ENTRY",
+    "support": "SUPPORT_MESSAGE",
+    "tombstone": "ACCOUNT_TOMBSTONE",
+}
+
+"""
+
+ACCOUNT_TOMBSTONE
+ANALYTICS_PROFILE
+BACKUP_ARCHIVE
+CACHE_ENTRY
+EMAIL_DELIVERY_LOG
+LEGAL_HOLD_RECORD
+MARKETING_PROFILE
+PRODUCT_TELEMETRY
+SEARCH_INDEX_ENTRY
+SECONDARY_IDENTIFIER
+SECURITY_AUDIT_LOG
+SUPPORT_ATTACHMENT
+SUPPORT_MESSAGE
+USER_EXPORT
+USER_PROFILE
+"""
 
 ACTION_MAPPING = {
     "DELETE": StepOperations.DELETE_RECORD,
@@ -157,17 +196,24 @@ OP_PRIORITY = {
     StepOperations.VERIFY_RESTORE_BLOCKED: 6,
 }
 
-SYSTEM_BY_PREFIX = {
-    "account": "account_service",
-    "analytics": "analytics_platform",
-    "audit_record": "security_service",
-    "backup": "backup_service",
-    "data_flow": "integration_service",
-    "export": "export_service",
-    "search": "search_service",
-    "support": "support_platform",
-    "tombstone": "identity_service",
+"""
+# In src/constants.py
+CATEGORY_BY_PREFIX = {
+    "analytics": "ANALYTICS_PROFILE",  # Was ANALYTICS_RECORD
+    "backup": "BACKUP_ARCHIVE",  # Was BACKUP_RESTORE_RISK
+    "cache": "CACHE_ENTRY",  # Was CACHE_RECORD
+    "marketing": "MARKETING_PROFILE",  # Was MARKETING_LIST
+    "search": "SEARCH_INDEX_ENTRY",  # Was SEARCH_INDEX
+    "support": "SUPPORT_MESSAGE",  # Was SUPPORT_TICKET
+    "legal_hold": "LEGAL_HOLD_RECORD",  # Added missing mapping
+    "user": "USER_PROFILE",
+    "audit_record": "SECURITY_AUDIT_LOG",  # Or matching your rules file
+    "data_flow": "DATA_FLOW",
+    "export": "EXPORT_RECORD",
+    "tombstone": "IDENTITY_TOMBSTONE",
 }
+"""
+
 
 TARGET_SYSTEMS = {
     "cache": "cache_service",
