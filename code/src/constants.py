@@ -45,7 +45,14 @@ MAX_TOKENS = 2048
 DATETIME_DURATION = 10
 RATE_LIMIT_PAUSE_TIMER = 3
 RATE_LIMIT_RETRIES = 4
+RATE_LIMIT_STATUS_ERR_CODE = 429
+INTERNAL_STATUS_ERR_CODE = 500
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+PHONE_LEN = 7
+
+DEFAULT_FIELD_NAME = "identifier"
+DEFAULT_RULE_CATEGORY = "general_record"
+
 RESOURCE_ID_RE = re.compile(
     r"\b(?:account|search|analytics|support|cache|export|email_delivery|audit_record"
     r"|data_flow|backup|tombstone|legal_hold|marketing)_\d+\b"
@@ -57,8 +64,21 @@ ABSENT_HINT_RE = re.compile(
     r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE
 )
 
-RATE_LIMIT_STATUS_ERR_CODE = 429
-INTERNAL_STATUS_ERR_CODE = 500
+# Personal Identifiiable Information (PII)
+PII_FIELDS = {
+    "name",
+    "full_name",
+    "email",
+    "phone",
+    "email_hash",
+    "requester_name",
+    "requester_email",
+    "requester_phone",
+    "owner_email",
+    "owner_phone",
+    "customer_email",
+    "display_name",
+}
 
 SYSTEM_BY_PREFIX = {  # resource prefix → output system_id
     "account": "account_service",
@@ -151,3 +171,7 @@ Return ONLY the boolean value True or False.
 CUSTOMER REQUEST:
 "{request_text}"
 """.strip()
+
+# Prompt to obtain steps according to the steps agent.
+# @TODO - check if needed
+STEPS_PROMPT = """ """.strip()

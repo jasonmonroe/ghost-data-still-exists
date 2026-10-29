@@ -64,6 +64,15 @@ class StepsAgent:
     def __init__(self):
         self._data = []
 
+    def check_finding_phase(self):
+        pass
+
+    def check_remediation_phase(self):
+        pass
+
+    def check_verification_phase(self):
+        pass
+
     def add(
         self,
         phase: str,
@@ -74,11 +83,13 @@ class StepsAgent:
         evidence_id: str,
     ) -> None:
         """Helper to append individual step components."""
+
+        # If ReportedStatus == COMPLETE include only verification steps
         self._data.append(
             {
                 "phase": phase,
-                "system_id": system_id,
-                "resource_id": resource_id,
+                "system_id": system_id,  # system_activity.source_system
+                "resource_id": resource_id,  # system_activity.resource_id
                 "operation": operation,
                 "state": state,
                 "evidence_id": evidence_id if evidence_id is not None else "",
@@ -98,9 +109,9 @@ class StepsAgent:
         steps = []
         for idx, item in enumerate(self._data, start=1):
             # Create a copy or update the dictionary directly to include step_no
-            step_item = (
-                item.copy()
-            )  # Good practice to avoid mutating self._data directly
+            step_item = item.copy()
+
+            # Good practice to avoid mutating self._data directly
             step_item["step_no"] = idx
             steps.append(step_item)
 

@@ -25,8 +25,12 @@ If so, what remediation and verification steps are legally required?"
   steps for `INCOMPLETE` cases use an empty `evidence_id`.
 """
 
+# Vendor Libraries
 import pandas as pd
-from src.enums import DeletionStatus, StepStates
+
+# Local Libraries
+from src.constants import DEFAULT_RULE_CATEGORY
+from src.enums import DeletionStatus, StepOperations, StepStates
 
 
 class DeletionRuleAgent:
@@ -62,14 +66,15 @@ class DeletionRuleAgent:
             self.data_category = match.iloc[0]["data_category"]
             return match.iloc[0]["data_category"]
 
-        return "general_record"  # fallback category
+        return DEFAULT_RULE_CATEGORY  # fallback category
 
-    def _get_category_rule(self, category: str) -> dict:
+    def get_rule_by_category(self, category: str) -> dict:
         """Lookup policy rule based on data category."""
         matched = self.rules[self.rules["data_category"] == category]
 
         if not matched.empty:
-            category_rule = matched.iloc[0].to_dict
+            category_rule = matched.iloc[0].to_dict()
+
             self.rule_id = category_rule["rule_id"]
             self.data_category = category_rule["data_category"]
             self.condition = category_rule["condition"]
@@ -85,12 +90,41 @@ class DeletionRuleAgent:
         Returns COMPLETE or INCOMPLETE
         """
 
-        # If a record taht should have been deleted (ABSENT required)
-        if finding.state == StepStates.PRESENT:
-            rule = self._get_category_rule(finding.category)
-            self.required_action = rule.get("required_action", None)
+        rule = self.get_rule_by_category(finding.category)
+        if not rule:
+            return DeletionStatus.COMPLETE
 
-            if self.required_action and self.required_action == "DELETE_RECORD":
-                return DeletionStatus.INCOMPLETE
+        self.required_action = rule.get("required_action")
+
+        # If a record must be ABSENT (deleted) but is still PRESENT
+        if (
+            finding.state == StepStates.PRESENT
+            and self.required_action == "DELETE_RECORD"
+        ):
+            return DeletionStatus.INCOMPLETE
+
+        # If a record must be REDACTED/ANONYMIZED but still exposes unredacted PII fields
+        if (
+            finding.state == StepStates.PRESENT
+            and finding.exposed_fields
+            and self.required_action
+            in (
+                StepOperations.REDACT_RECORD,
+                StepOperations.ANONYMIZE_RECORD,
+            )
+        ):
+            return DeletionStatus.INCOMPLETE
 
         return DeletionStatus.COMPLETE
+
+    """
+    # If a record taht should have been deleted (ABSENT required)
+    if finding.state == StepStates.PRESENT:
+        rule = self._ get_rule_by_category(finding.category)
+        self.required_action = rule.get("required_action", None)
+
+        if self.required_action and self.required_action == "DELETE_RECORD":
+            return DeletionStatus.INCOMPLETE
+
+    return DeletionStatus.COMPLETE
+    """

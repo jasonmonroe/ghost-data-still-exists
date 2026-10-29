@@ -77,10 +77,11 @@ class LlmModel:
                 return {"error": True}
 
     def _process_response(self, response, prompt: str):
-
-        print(response)
+        print(f"response datatype: {type(response)}")
+        print(json.dumps(response))
 
         # Track token usage for your usage_report.md
+        # @TODO - find out if Gemini has a usage attr
         self.usage.response_id = response.id
         if getattr(response, "usage", None):
             self.usage.record(
@@ -89,6 +90,8 @@ class LlmModel:
                 output_tokens=response.usage.completion_tokens or 0,
                 prompt=prompt,
             )
+        else:
+            print()
 
         # Send content of response back to source
         content = response.output_text

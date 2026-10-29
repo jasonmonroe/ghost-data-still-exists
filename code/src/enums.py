@@ -4,10 +4,10 @@
 # +---------------------------------------------------------------------------+
 
 # Enums for the application
-from enum import Enum
+from enum import StrEnum
 
 
-class DeletionStatus(Enum):
+class DeletionStatus(StrEnum):
     #  The data is truly gone (or properly anonymized/retained according to strict company policy), and you can prove it with evidence.
     COMPLETE = "COMPLETE"
 
@@ -18,19 +18,19 @@ class DeletionStatus(Enum):
     NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
-class ReportedStatus(Enum):
+class ReportedStatus(StrEnum):
     COMPLETE = "COMPLETE"
     PARTIAL = "PARTIALLY_COMPLETE"
     NOT_STARTED = "NOT_STARTED"
 
 
-class StepPhrases(Enum):
+class StepPhrases(StrEnum):
     FINDING = "FINDING"
     REMEDIATION = "REMEDIATION"
     VERIFICATION = "VERIFICATION"
 
 
-class StepOperations(Enum):
+class StepOperations(StrEnum):
     REPORT_REMAINING_RECORD = "REPORT_REMAINING_RECORD"
     REPORT_EXPOSED_PII = "REPORT_EXPOSED_PII"
     REPORT_ACTIVE_DATA_FLOW = "REPORT_ACTIVE_DATA_FLOW"
@@ -48,7 +48,7 @@ class StepOperations(Enum):
     VERIFY_RESTORE_BLOCKED = "VERIFY_RESTORE_BLOCKED"
 
 
-class StepStates(Enum):
+class StepStates(StrEnum):
     PRESENT = "PRESENT"
     ACTIVE = "ACTIVE"
     DISABLED = "DISABLED"

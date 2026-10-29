@@ -5,6 +5,8 @@
 |                                EVIDENCE AGENT                               |
 +-----------------------------------------------------------------------------+
 
+                ** Bread & Butter of the application **
+
 Digital detective—its sole job is to answer: "Does this resource exist in the
 evidence, what is its state (PRESENT/ABSENT), and what is its timeline?" It
 shouldn't need to know about compliance policies or required remediation actions.
@@ -12,7 +14,7 @@ shouldn't need to know about compliance policies or required remediation actions
 Turns raw evidence into a per-resource ledger for one case.
 
     all_evidence (files captured <= audit_at)
-       ├─ A. _user_resources()  which records belong to this user
+       ├─ A. _get_resources()  which records belong to this user
        ├─ B. _timeline()        what was done to each record (claims)
        ├─ C. _state()           what is true at audit_at (proof + file_id)
        └─ D. ResourceFinding    one per record → DecisionRuleAgent
@@ -37,8 +39,11 @@ from pypdf import PdfReader
 from src.constants import (
     ABSENT_HINT_RE,
     DATASET_PATH,
+    DEFAULT_FIELD_NAME,
     LINK_RE,
+    PHONE_LEN,
     PHONE_RE,
+    PII_FIELDS,
     RESOURCE_ID_RE,
     TARGET_SYSTEMS,
     TRACE_ID_RE,
@@ -68,7 +73,6 @@ class EvidenceAgent:
         self._terms: tuple[set[str], set[str]] = (set(), set())
         self._system_by_prefix: dict[str, str] = self._build_system_by_prefix()
 
-    # ------------------------------------------------------------------ public
     def search(self, user_dataset: dict, rules_agent) -> list[ResourceFinding]:
         """
         When you call agent.search(user_dataset), it executes four major phases:
@@ -79,7 +83,7 @@ class EvidenceAgent:
         _filter(): Narrows down the massive pool of evidence files to only those
         that actually mention the user.
 
-        _user_resources(): Extracts every resource ID tied to the user (via
+        _get_resources(): Extracts every resource ID tied to the user (via
         system activity events, co-occurrence in evidence chunks, or
         resource-identity link tables).
 
@@ -88,40 +92,47 @@ class EvidenceAgent:
         at audit_at.
         """
 
-        # self._evidence_files = user_dataset["evidence_files"].to_dict(orient="records")
-        self._evidence_files = user_dataset.pop("evidence_files", None)
+        self._evidence_files = user_dataset.get("evidence_files", None)
         self.user = user_dataset
+        self._terms = self._get_search_terms()  # needed by _filter/_get_exposed
 
-        all_evidence = (
-            self._get_evidence()
-        )  # every file <= audit_at (needed for absence proof)
-        matched = self._filter(all_evidence)  # files that mention the user
+        # every file <= audit_at (needed for absence proof)
+        all_evidence = self._get_evidence()
 
-        resource_ids = self._user_resources(matched)
+        # files that mention the user
+        filtered_evidence = self._filter(all_evidence)
+        resource_ids = self._get_resources(filtered_evidence)
+
         return [
             self._build_finding(rid, all_evidence, rules_agent)
             for rid in sorted(resource_ids)
-        ]  # B-D
+        ]
 
-    def _user_resources(self, matched: list[dict]) -> set[str]:
+    def _get_resources(self, matched: list[dict]) -> set[str]:
+        """
+        Pass filtered evidence in and get the resource data from system activities.
+        Parse all evidence data into chunks and check if any chunk matches any
+        of the search terms.
+        """
         resources: set[str] = set()
 
-        # 1. The case's own workflow events (reported_at +/- window)
+        # The case's own workflow events (reported_at +/- window)
         resources |= {
             clean_str(r)
             for r in self.user["system_activity"]["resource_id"]
             if clean_str(r)
         }
 
-        # 2. Resources in the SAME line / row / record / trace as a user identifier
+        # Resources in the SAME line / row / record / trace as a user identifier
         for f in matched:
             for chunk in self._chunks(f["content"]):
                 if self._mentions_user(chunk):
                     resources |= set(RESOURCE_ID_RE.findall(chunk))
 
-        # 3. Data-catalog LINK_RESOURCE_IDENTITY rows naming this user
+        # Data-catalog LINK_RESOURCE_IDENTITY rows naming this user
         pool = self._activity_pool()
         links = pool[pool["event_type"] == "LINK_RESOURCE_IDENTITY"]
+
         for details in links["details"]:
             m = LINK_RE.search(clean_str(details))
             if m and self._mentions_user(f"{m.group(2)} {m.group(3)}"):
@@ -191,95 +202,144 @@ class EvidenceAgent:
         state, evidence_id = self._state(resource_id, after, evidence)
 
         # @TODO identifier fields still filled -> REPORT_EXPOSED_PII (StepOperations.__)
-        exposed = (
-            (self._get_exposed(state, evidence, resource_id, evidence_id),)
-            if state == StepStates.PRESENT
-            else frozenset()
+        exposed = frozenset(
+            self._get_exposed(state, evidence, resource_id, evidence_id)
         )
 
         return ResourceFinding(
-            system_id=self._system_by_prefix.get(prefix_of(resource_id), "unknown"),
+            system_id=self._system_by_prefix.get(
+                prefix_of(resource_id), str(StepStates.UNKNOWN.value).lower()
+            ),
             resource_id=resource_id,
             category=rules_agent.get_category(resource_id),
-            state=state,
+            state=str(state.value),
             evidence_id=evidence_id,
             exposed_fields=exposed,
             attributes={
-                "enabled": True,
-                "restore_allowed": False,
+                # "enabled": True,
+                # "restore_allowed": False,
             },
             timeline=tuple(timeline["activity_id"]),
         )
 
     def _get_exposed(
         self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
-    ):
-        exposed = set()
+    ) -> set[str]:
+        """
+        Inspects the structured proof record to find exact PII field names
+        that are still populated (not null or empty).
+
+        Which kinds of identifier ("identifier", "phone") the proof chunk still
+        shows.
+
+        Blacklist certain information (PII) based on indentified field names from
+        the user. Some recoreds aren't deleted.  Policy says keep the record,
+        but black out the personal details.
+        """
+        exposed: set[str] = set()
 
         if state != StepStates.PRESENT or not evidence_id:
             return exposed
 
-        # 1. Directly pluck the matching evidence file
-        target_evidence = next(
-            (e for e in evidence if e.get("file_id") == evidence_id), None
-        )
-        if not target_evidence:
+        # Directly pluck the matching evidence file
+        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
+        if not target:
             return exposed
 
-        content = target_evidence["content"]
+        # Inspect chunks (or parse JSON/SQL record dictionaries directly)
+        for chunk in self._chunks(target["content"]):
+            if resource_id in chunk:
+                try:
+                    # If chunk is a JSON string of a record, load it as a dict
+                    record = json.loads(chunk) if isinstance(chunk, str) else chunk
+                    if isinstance(record, dict):
+                        # Check which PII fields are still present and not empty/null
+                        for field in PII_FIELDS:
+                            value = record.get(field)
+                            if value not in (None, "", "null"):
+                                exposed.add(field)
+                        break
+                except Exception:
+                    # Fallback if chunk isn't valid JSON
+                    print("⚠️ Warning: chunk is not valid JSON.")
+                    continue
+
+        return exposed
+
+    def _get_exposed_old(
+        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
+    ) -> set[str]:
+
+        exposed: set[str] = set()
+        if state != StepStates.PRESENT or not evidence_id:
+            return exposed
+
+        # 1. Directly pluck the matching evidence file
+        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
+        if not target:
+            return exposed
+
         text_terms, phone_terms = self._terms
 
-        def add_text_terms(chunk_text, terms, exp_set):
-            for term in terms:
-                if term and term in chunk_text.lower():
-                    exp_set.add("identifier")
-            return exp_set
-
-        def add_phone_terms(chunk_text, p_terms, exp_set):
-            found_phones = {re.sub(r"\D", "", p) for p in PHONE_RE.findall(chunk_text)}
-            if found_phones and (found_phones & p_terms):  # intersection check
-                exp_set.add("phone")
-            return exp_set
-
-        # 2. Search chunks within that specific file
-        for chunk in self._chunks(content):
+        # 2. First chunk of that file naming the resource decides what is exposed
+        for chunk in self._chunks(target["content"]):
             if resource_id in chunk:
-                exposed = add_text_terms(chunk, text_terms, exposed)
-                if phone_terms:
-                    exposed = add_phone_terms(chunk, phone_terms, exposed)
+                chunk_lower = chunk.lower()
+
+                # Check for specific text terms (emails, hashes, user identifiers)
+                for term in text_terms:
+                    if term and self._term_in_text(term, chunk_lower):
+                        # Optional: refinement: if it's an email format
+                        exposed_field = "email" if "@" in term else DEFAULT_FIELD_NAME
+                        exposed.add(exposed_field)
+
+                if phone_terms & self._phones_in(chunk):
+                    exposed.add("phone")
                 break
 
         return exposed
 
     # -------------------------------------------------------------- matching
-    def _search_terms(self) -> tuple[set[str], set[str]]:
+    def _get_search_terms(self) -> tuple[set[str], set[str]]:
         """(text terms, phone digit strings) for this user: current + historical."""
-        ident = self.user["user_identities"].iloc[0]
-        log = self.user["user_audit_log"]
+        user_identity = self.user["user_identities"].iloc[0]
+        user_audit_log = self.user["user_audit_log"]
 
-        def history(field_name: str) -> set[str]:
-            rows = log[log["field_name"] == field_name]
-            return {
+        # field_name -> how a raw value is normalized before matching
+        normalizers = {
+            "email": str.lower,
+            "email_hash": str.lower,
+            "phone": lambda v: re.sub(r"\D", "", v),
+        }
+
+        def values_for(field_name: str) -> set[str]:
+            """Current value + every old/new value from the audit log, normalized."""
+            rows = user_audit_log[user_audit_log["field_name"] == field_name]
+            raw = {clean_str(user_identity[field_name])} | {
                 clean_str(v) for v in pd.concat([rows["old_value"], rows["new_value"]])
-            } - {""}
+            }
+            return {normalizers[field_name](v) for v in raw if v}
 
-        emails = {
-            e.lower() for e in ({clean_str(ident["email"])} | history("email")) if e
-        }
-        hashes = {
-            h.lower()
-            for h in ({clean_str(ident["email_hash"])} | history("email_hash"))
-            if h
-        }
+        emails = values_for("email")
+        hashes = values_for("email_hash")
         hashes |= {hashlib.sha256(e.encode()).hexdigest() for e in emails}
-        phones = {
-            re.sub(r"\D", "", p)
-            for p in ({clean_str(ident["phone"])} | history("phone"))
-            if p
-        }
+        phones = values_for("phone")
 
-        text_terms = {clean_str(ident["user_id"]).lower()} | emails | hashes
-        return text_terms - {""}, {p for p in phones if len(p) >= 7}
+        # Emails and email hashes join the user_id as text needles.
+        text_terms = {clean_str(user_identity["user_id"]).lower()} | emails | hashes
+
+        return text_terms - {""}, {p for p in phones if len(p) >= PHONE_LEN}
+
+    @staticmethod
+    def _term_in_text(term: str, low: str) -> bool:
+        """Whole-token match on lowercased text: 'user_01' must not hit 'user_010',
+        'amina@x.com' must not hit 'jamina@x.com'."""
+        return bool(re.search(rf"(?<![\w.+-]){re.escape(term)}(?![\w-]|\.\w)", low))
+
+    @staticmethod
+    def _phones_in(text: str) -> set[str]:
+        """Digit-only phone numbers found in text."""
+        return {re.sub(r"\D", "", p) for p in PHONE_RE.findall(text)}
 
     def _mentions_user(self, text: str) -> bool:
         r"""
@@ -294,21 +354,15 @@ class EvidenceAgent:
         """
 
         text_terms, phone_terms = self._terms
-        low = text.lower()
-        for term in text_terms:
-            # whole-token match: 'user_01' must not match 'user_010', 'amina@x.com' not 'jamina@x.com'
-            if re.search(rf"(?<![\w.+-]){re.escape(term)}(?![\w-]|\.\w)", low):
-                return True
+        text_lower = text.lower()
 
-        if phone_terms:
-            found = {re.sub(r"\D", "", p) for p in PHONE_RE.findall(text)}
-            return bool(found & phone_terms)
+        if any(self._term_in_text(t, text_lower) for t in text_terms):
+            return True
 
-        return False
+        return bool(phone_terms & self._phones_in(text))
 
     def _filter(self, evidence_list: list[dict]) -> list[dict]:
         """Files with at least one chunk that mentions the user (each file once)."""
-        self._terms = self._search_terms()
         return [
             f
             for f in evidence_list
@@ -376,23 +430,27 @@ class EvidenceAgent:
         for path in self.evidence.get("records", []):
             if Path(path).suffix.lower() != ".json":
                 continue
-            for rec in self._json_records(self._read_evidence(Path(path))):
+            for rec in self._json_records(self._extract_content(Path(path))):
                 system = rec.get("system") or rec.get("data_store")
+
                 if rec.get("resource_id") and system:
                     counts[prefix_of(str(rec["resource_id"]))][system] += 1
+
         mapping = {p: c.most_common(1)[0][0] for p, c in counts.items()}
 
         # Prefixes not present in JSON evidence (single owner in system_activity)
         for p, system in TARGET_SYSTEMS.items():
             mapping.setdefault(p, system)
+
         return mapping
 
     # ---------------------------------------------------------------- reading
     def _get_evidence(self) -> list[dict]:
         """Read every candidate file (already filtered to captured_at <= audit_at)."""
         evidence = []
-        for evidence_file in self._evidence_files:
+        for evidence_file in self._evidence_files.to_dict(orient="records"):
             filepath = DATASET_PATH / evidence_file["file_path"]
+
             if not filepath.exists():
                 print(f"🚨 Error: {filepath} does not exist.")
                 continue
@@ -403,12 +461,12 @@ class EvidenceAgent:
                     "file_path": filepath,
                     "origin": evidence_file["origin"],
                     "captured_at": evidence_file["captured_at"],
-                    "content": self._read_evidence(filepath),
+                    "content": self._extract_content(filepath),
                 }
             )
         return evidence
 
-    def _read_evidence(self, path: Path):
+    def _extract_content(self, path: Path):
         """
         It includes all the robust readers we discussed earlier:
         _read_pdf: Extracts text page-by-page using PdfReader.
@@ -483,3 +541,24 @@ class EvidenceAgent:
             }
         finally:
             conn.close()
+
+    def request(self):
+        # Ask the model what the resource findings should be based on data collected.
+        """
+        Example: case_001: COMPLETE
+        [
+            {"step_no": 1, "phase": "VERIFICATION", "system_id": "account_service", "resource_id": "account_001",
+            "operation": "VERIFY_RECORD_ABSENT", "state": "ABSENT", "evidence_id": "evidence_54"}
+        ]
+
+        Example: case_002: INCOMPLETE
+        [
+          {"step_no": 1, "phase": "FINDING",      "system_id": "account_service", "resource_id": "account_005",
+           "operation": "REPORT_REMAINING_RECORD", "state": "PRESENT", "evidence_id": "evidence_54"},
+          {"step_no": 2, "phase": "REMEDIATION",  "system_id": "account_service", "resource_id": "account_005",
+           "operation": "DELETE_RECORD",           "state": "ABSENT",  "evidence_id": ""},
+          {"step_no": 3, "phase": "VERIFICATION", "system_id": "account_service", "resource_id": "account_005",
+           "operation": "VERIFY_RECORD_ABSENT",    "state": "ABSENT",  "evidence_id": ""}
+        ]
+
+        """

@@ -1,5 +1,6 @@
 # requirements.txt
 
+google-genai
 numpy
 openai
 pandas

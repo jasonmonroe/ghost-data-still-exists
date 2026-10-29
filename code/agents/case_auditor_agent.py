@@ -16,7 +16,7 @@ import json
 # Vendor Libraries
 import pandas as pd
 from agents.deletion_rule_agent import DeletionRuleAgent
-from agents.evidence_agent import EvidenceAgent
+from agents.evidence_agent import EvidenceAgent, ResourceFinding
 
 # Local Libraries
 from agents.steps_agent import StepsAgent
@@ -28,7 +28,7 @@ from src.constants import (
     VALID_KEYPHRASES,
     VALIDITY_PROMPT,
 )
-from src.enums import DeletionStatus
+from src.enums import DeletionStatus, StepOperations, StepPhrases, StepStates
 
 
 class CaseAuditorAgent:
@@ -68,8 +68,8 @@ class CaseAuditorAgent:
                 evidence_findings = []
             else:
                 evidence_findings = self._analyze(user_dataset)
-                user_evidence_dataset = user_dataset
-                user_evidence_dataset["evidence"] = evidence_findings
+                # user_evidence_dataset = user_dataset
+                # user_evidence_dataset["evidence"] = evidence_findings
 
                 # user_evidence_dataset = {**user_dataset, **evidence_dataset}
 
@@ -77,7 +77,8 @@ class CaseAuditorAgent:
                 # @deprecated - builder = PromptBuilder(user_evidence_dataset, case_s)
                 deletion_status = self._get_deletion_status(evidence_findings)
 
-            steps_json = self._finalize(deletion_status)
+            # Pass the findings directly into _finalize()
+            steps_json = self._finalize(deletion_status, evidence_findings)
 
         return self._get_output(deletion_status, steps_json)
 
@@ -99,7 +100,7 @@ class CaseAuditorAgent:
 
         return response.strip().lower() in ("true", "yes", "1")
 
-    def _analyze(self, user_dataset: dict) -> dict:
+    def _analyze(self, user_dataset: dict) -> list[ResourceFinding]:
         """Uncover the Truth: Look past what the company's dashboard claims
         ("Complete!") and check the actual evidence files (such as database
         snapshots, logs, and support tickets) to see if personal data is still
@@ -112,9 +113,7 @@ class CaseAuditorAgent:
         """
 
         # Return dict of type list[ResourceFinding]
-        findings = self._evidence_agent.search(user_dataset, self._rules_agent)
-
-        return {"findings": findings}
+        return self._evidence_agent.search(user_dataset, self._rules_agent)
 
     def _filter_by_user(self) -> dict:
         """Resolve Identities: Match current and historical names, emails, and
@@ -196,8 +195,11 @@ class CaseAuditorAgent:
         }
 
     def _filter_system_activity(self, system_activity_df: pd.DataFrame) -> pd.DataFrame:
-        """This case's own workflow events: reported_at +/- DATETIME_DURATION minutes,
-        never later than audit_at."""
+        """
+        This case's own workflow events: reported_at +/- DATETIME_DURATION
+        minutes, never later than audit_at.
+        """
+
         reported_at = pd.Timestamp(self.reported_at)
         delta = pd.Timedelta(minutes=DATETIME_DURATION)
         earliest = (reported_at - delta).strftime(DATE_FORMAT)
@@ -207,9 +209,39 @@ class CaseAuditorAgent:
             system_activity_df["event_time"].between(earliest, latest)
         ]
 
-    def _get_deletion_status(self, evidence_findings: list) -> str:
+    def _get_delete_status(self, evidence_findings: dict) -> str:
+        """
+        ** Evaluate all findings **
+        For each case, your program has to output one of three statuses:
+
+        - COMPLETE:
+        The data is truly gone (or properly anonymized/retained
+        according to strict company policy), and you can prove it with evidence.
+
+        - INCOMPLETE:
+        Ghost data still exists, or an active process/backup can
+        bring the data back to life.
+
+        - NOT_APPLICABLE:
+        The user didn't actually request a deletion."""
+
+        if not evidence_findings:
+            return DeletionStatus.COMPLETE
+
+        # If any finding evaluates to INCOMPLETE, the case status is INCOMPLETE
+        for finding in evidence_findings:
+            status = self._rules_agent.evaluate(finding)
+            if status == DeletionStatus.INCOMPLETE:
+                return DeletionStatus.INCOMPLETE
+
+            return DeletionStatus.COMPLETE
+
+    # @deprecated
+    def _get_deletion_status_old(self, evidence_findings: list) -> str:
         # @TODO - needs work
-        """For each case, your program has to output one of three statuses:
+        """
+        ** Evaluate all findings **
+        For each case, your program has to output one of three statuses:
 
         - COMPLETE:
         The data is truly gone (or properly anonymized/retained
@@ -230,6 +262,7 @@ class CaseAuditorAgent:
         # Only return one of three choices
 
         deletion_status = self._rules_agent.evaluate(evidence_findings)
+        print(f"deletion_status={deletion_status}")
 
         # @TODO - Do additional logic to check rules deletion status
 
@@ -242,7 +275,8 @@ class CaseAuditorAgent:
 
         return deletion_status
 
-    def _finalize(self, deletion_status: str) -> str:
+    # @TODO - too much complexity in one function
+    def _finalize_keep(self, deletion_status: str, findings: list) -> str:
         """Delivering the Solution
         Your solution must process all the data and generate a final file called
         output.csv.
@@ -265,6 +299,160 @@ class CaseAuditorAgent:
         }
         ```
         """
+        if deletion_status not in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
+            return self._steps_agent.compile()
+
+        for finding in findings:
+            rule = self._rules_agent._get_rule_by_category(finding.category)
+            required_action = rule.get("required_action", StepOperations.DELETE_RECORD)
+            is_incomplete = (
+                self._rules_agent.evaluate(finding) == DeletionStatus.INCOMPLETE
+            )
+
+            # FINDING PHASE (If record is present)
+            if finding.state == StepStates.PRESENT:
+                op = (
+                    StepOperations.REPORT_EXPOSED_PII
+                    if finding.exposed_fields
+                    else StepOperations.REPORT_REMAINING_RECORD
+                )
+                self._steps_agent.add(
+                    phase=StepPhrases.FINDING,
+                    system_id=finding.system_id,
+                    resource_id=finding.resource_id,
+                    operation=op,
+                    state=finding.state,
+                    evidence_id=finding.evidence_id,
+                )
+
+            # REMEDIATION PHASE (Only if incomplete)
+            if is_incomplete:
+                rem_state = (
+                    StepStates.ABSENT
+                    if required_action == StepOperations.DELETE_RECORD
+                    else StepStates.REDACTED
+                )
+                self._steps_agent.add(
+                    phase=StepPhrases.REMEDIATION,
+                    system_id=finding.system_id,
+                    resource_id=finding.resource_id,
+                    operation=required_action,
+                    state=rem_state,
+                    evidence_id="",
+                )
+
+            # VERIFICATION PHASE
+            if is_incomplete:
+                verify_op = (
+                    StepOperations.VERIFY_RECORD_ABSENT
+                    if required_action == StepOperations.DELETE_RECORD
+                    else StepOperations.VERIFY_RECORD_REDACTED
+                )
+                verify_state = (
+                    StepStates.ABSENT
+                    if required_action == StepOperations.DELETE_RECORD
+                    else StepStates.REDACTED
+                )
+                verify_evidence = ""
+            else:
+                verify_op = (
+                    StepOperations.VERIFY_RECORD_ABSENT
+                    if finding.state == StepStates.ABSENT
+                    else StepOperations.VERIFY_RECORD_PRESENT
+                )
+                verify_state = finding.state
+                verify_evidence = finding.evidence_id or ""
+
+            self._steps_agent.add(
+                phase=StepPhrases.VERIFICATION,
+                system_id=finding.system_id,
+                resource_id=finding.resource_id,
+                operation=verify_op,
+                state=verify_state,
+                evidence_id=verify_evidence,
+            )
+
+        return self._steps_agent.compile()
+
+    # @depracated
+    def _finalize2(
+        self, deletion_status: str, evidence_findings: list[ResourceFinding]
+    ) -> str:
+
+        if deletion_status not in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
+            return self._steps_agent.compile()
+
+        for finding in evidence_findings:
+            rule = self._rules_agent.get_rule_by_category(finding.category)
+            required_action = rule.get("required_action", "DELETE_RECORD")
+            is_incomplete = (
+                self._rules_agent.evaluate(finding) == DeletionStatus.INCOMPLETE
+            )
+
+            # 1. FINDING PHASE (If record is present)
+            if finding.state == "PRESENT":
+                op = (
+                    "REPORT_EXPOSED_PII"
+                    if finding.exposed_fields
+                    else "REPORT_REMAINING_RECORD"
+                )
+                self._steps_agent.add(
+                    "FINDING",
+                    finding.system_id,
+                    finding.resource_id,
+                    op,
+                    finding.state,
+                    finding.evidence_id,
+                )
+
+            # 2. REMEDIATION PHASE (Only if incomplete)
+            if is_incomplete:
+                rem_state = (
+                    "ABSENT" if required_action == "DELETE_RECORD" else "REDACTED"
+                )
+                self._steps_agent.add(
+                    "REMEDIATION",
+                    finding.system_id,
+                    finding.resource_id,
+                    required_action,
+                    rem_state,
+                    "",
+                )
+
+            # 3. VERIFICATION PHASE
+            if is_incomplete:
+                verify_op = (
+                    "VERIFY_RECORD_ABSENT"
+                    if required_action == "DELETE_RECORD"
+                    else "VERIFY_RECORD_REDACTED"
+                )
+                verify_state = (
+                    "ABSENT" if required_action == "DELETE_RECORD" else "REDACTED"
+                )
+                verify_evidence = ""
+            else:
+                verify_op = (
+                    "VERIFY_RECORD_ABSENT"
+                    if finding.state == "ABSENT"
+                    else "VERIFY_RECORD_PRESENT"
+                )
+                verify_state = finding.state
+                verify_evidence = finding.evidence_id or ""
+
+            self._steps_agent.add(
+                "VERIFICATION",
+                finding.system_id,
+                finding.resource_id,
+                verify_op,
+                verify_state,
+                verify_evidence,
+            )
+
+        return self._steps_agent.compile()
+
+    # @depracated
+    def _finalize_old(self, deletion_status: str) -> str:
+
         # @TODO - Verify data is correct.
         if deletion_status in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
             self._steps_agent.add(
