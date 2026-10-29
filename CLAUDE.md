@@ -100,3 +100,44 @@ code/
   (`enabled`, `restore_allowed`, `retention_until`).
 - Then: DeletionRuleAgent → StepsAgent → wire `_get_output` (currently `json.load` on a list),
   remove `sys.exit(0)` in the pipeline loop, evaluation + usage reports.
+
+  account_ → USER_PROFILE. case_05 now remediates with DELETE_RECORD → VERIFY_RECORD_ABSENT. 🎉
+
+## 🔴 Six category names don't exist in `deletion_rules.csv`
+
+Your `CATEGORY_BY_PREFIX` map is the right idea, but six values are close to the real names, not exactly them:
+
+| Prefix | Your value | Actual name in the rules file |
+|---|---|---|
+| `analytics` | `ANALYTICS_RECORD` | **`ANALYTICS_PROFILE`** |
+| `backup` | `BACKUP_RESTORE_RISK` | **`BACKUP_ARCHIVE`** |
+| `cache` | `CACHE_RECORD` | **`CACHE_ENTRY`** |
+| `marketing` | `MARKETING_LIST` | **`MARKETING_PROFILE`** |
+| `search` | `SEARCH_INDEX` | **`SEARCH_INDEX_ENTRY`** |
+| `support` | `SUPPORT_TICKET` | **`SUPPORT_MESSAGE`** (attachments: `SUPPORT_ATTACHMENT`) |
+| `legal_hold` | *(missing)* | **`LEGAL_HOLD_RECORD`** |
+
+A name that doesn't exist → no rule found → `evaluate()` returns **COMPLETE**.
+
+You can see it in `case_11`, which went from INCOMPLETE to **COMPLETE** while three search records are still PRESENT:
+
+```text
+5 VERIFICATION search_service search_052  VERIFY_RECORD_PRESENT PRESENT   ← DELETE rule; should be a finding
+```
+
+That's why COMPLETE jumped from 19 to 24.
+
+**Suggestion:** make this kind of mistake impossible to miss. When `DeletionRuleAgent` starts, check that every category in the map (except `data_flow`, which is a process) actually exists in the rules file, and raise an error if one doesn't. One typo then becomes a crash at startup instead of quietly wrong statuses.
+
+## 🟠 Wrong finding type for DELETE records
+
+```text
+case_05  1 FINDING  account_005  REPORT_EXPOSED_PII  ← should be REPORT_REMAINING_RECORD
+```
+
+`add_finding_phase` picks the operation based on `exposed_fields`. It should depend on the **rule's action**:
+
+- **DELETE** → `REPORT_REMAINING_RECORD` (the whole record shouldn't exist)
+- **REDACT / ANONYMIZE** → `REPORT_EXPOSED_PII` (the record can stay, but its fields can't)
+
+**Hint:** you already pass `required_action` into the remediation step. Pass it into the finding step too.
