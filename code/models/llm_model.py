@@ -9,8 +9,6 @@ import time
 
 from google import genai
 from google.genai.errors import APIError  # Or general Exception
-
-# from openai import InternalServerError, RateLimitError
 from src.constants import (
     INTERNAL_STATUS_ERR_CODE,
     MAX_TOKENS,
@@ -25,12 +23,7 @@ from src.usage_tracker import UsageTracker
 
 class LlmModel:
     def __init__(self):
-        # self._client = OpenAI(
-        #    base_url=MODEL_API_URL,
-        #    api_key=MODEL_API_KEY,
-        #    timeout=60.0,
-        #    max_retries=RATE_LIMIT_RETRIES,
-        # )
+
         self._client = genai.Client()
         self.usage = UsageTracker()
 

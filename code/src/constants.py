@@ -11,6 +11,8 @@ import os
 import re
 from pathlib import Path
 
+from src.enums import StepOperations
+
 # Constants for the application
 
 APP_NAME = os.getenv("APP_NAME")
@@ -52,6 +54,7 @@ PHONE_LEN = 7
 
 DEFAULT_FIELD_NAME = "identifier"
 DEFAULT_RULE_CATEGORY = "general_record"
+DEFAULT_REQ_ACTION = "DELETE_RECORD"
 
 RESOURCE_ID_RE = re.compile(
     r"\b(?:account|search|analytics|support|cache|export|email_delivery|audit_record"
@@ -63,6 +66,35 @@ LINK_RE = re.compile(r"linked (\S+) .*? to (\S+@\S+?) and (user_\d+)", re.IGNORE
 ABSENT_HINT_RE = re.compile(
     r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE
 )
+
+ACTION_MAPPING = {
+    "DELETE": StepOperations.DELETE_RECORD,
+    "REDACT": StepOperations.REDACT_RECORD,
+    "ANONYMIZE": StepOperations.ANONYMIZE_RECORD,
+    "RETAIN": StepOperations.VERIFY_RECORD_PRESENT,
+}
+
+OP_PRIORITY = {
+    # Findings
+    StepOperations.REPORT_REMAINING_RECORD: 1,
+    StepOperations.REPORT_EXPOSED_PII: 2,
+    StepOperations.REPORT_ACTIVE_DATA_FLOW: 3,
+    StepOperations.REPORT_RESTORE_RISK: 4,
+    # Remediations
+    StepOperations.DISABLE_DATA_FLOW: 1,
+    StepOperations.BLOCK_RESTORE: 2,
+    StepOperations.DELETE_RECORD: 3,
+    StepOperations.REDACT_RECORD: 4,
+    StepOperations.ANONYMIZE_RECORD: 5,
+    # Verifications
+    StepOperations.VERIFY_RECORD_ABSENT: 1,
+    StepOperations.VERIFY_RECORD_PRESENT: 2,
+    StepOperations.VERIFY_RECORD_REDACTED: 3,
+    StepOperations.VERIFY_RECORD_ANONYMIZED: 4,
+    StepOperations.VERIFY_DATA_FLOW_DISABLED: 5,
+    StepOperations.VERIFY_RESTORE_BLOCKED: 6,
+}
+
 
 # Personal Identifiiable Information (PII)
 PII_FIELDS = {

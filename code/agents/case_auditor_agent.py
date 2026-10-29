@@ -28,6 +28,7 @@ from models.llm_model import LlmModel
 from src.constants import (
     DATE_FORMAT,
     DATETIME_DURATION,
+    DEFAULT_REQ_ACTION,
     NON_DELETION_KEYWORDS,
     VALID_KEYPHRASES,
     VALIDITY_PROMPT,
@@ -72,15 +73,14 @@ class CaseAuditorAgent:
                 deletion_status = DeletionStatus.COMPLETE
                 evidence_findings = []
             else:
-                evidence_findings = self._analyze(user_dataset)
-
                 # With results lets build a prompt and get a response to determine final DeletionStatus
+                evidence_findings = self._analyze(user_dataset)
                 deletion_status = self._get_deletion_status(evidence_findings)
 
             # Pass the findings directly into _finalize()
             steps_json = self._finalize(deletion_status, evidence_findings)
 
-            print(f"Step Count: {self._steps_agent.count()}")
+            print(f"💡 Step Count: {self._steps_agent.count()}")
 
         return self._get_output(deletion_status, steps_json)
 
@@ -269,7 +269,8 @@ class CaseAuditorAgent:
         return deletion_status
 
     def _finalize(self, deletion_status: str, findings: list[ResourceFinding]):
-        """Delivering the Solution
+        """
+        Delivering the Solution
         Your solution must process all the data and generate a final file called
         output.csv.
         For Complete or Incomplete cases, your code must output a structured
@@ -293,7 +294,7 @@ class CaseAuditorAgent:
             return self._steps_agent.compile()
 
         for finding in findings:
-            rule = self._rules_agent._get_rule_by_category(finding.category)
+            rule = self._rules_agent.get_rule_by_category(finding.category)
             required_action = rule.get("required_action", StepOperations.DELETE_RECORD)
 
             is_incomplete = (
@@ -308,9 +309,10 @@ class CaseAuditorAgent:
             if is_incomplete:
                 self._steps_agent.add_remediation_phase(finding, required_action)
                 self._steps_agent.set_verify_incomplete(required_action)
+                self._steps_agent.add_verification_phase(finding)
             else:
                 self._steps_agent.set_verify_complete(finding)
-                self._steps_agent.add_verification_phase()
+                self._steps_agent.add_verification_phase(finding)
 
         return self._steps_agent.compile()
 
@@ -411,7 +413,7 @@ class CaseAuditorAgent:
 
         for finding in evidence_findings:
             rule = self._rules_agent.get_rule_by_category(finding.category)
-            required_action = rule.get("required_action", "DELETE_RECORD")
+            required_action = rule.get("required_action", DEFAULT_REQ_ACTION)
             is_incomplete = (
                 self._rules_agent.evaluate(finding) == DeletionStatus.INCOMPLETE
             )
@@ -435,7 +437,7 @@ class CaseAuditorAgent:
             # 2. REMEDIATION PHASE (Only if incomplete)
             if is_incomplete:
                 rem_state = (
-                    "ABSENT" if required_action == "DELETE_RECORD" else "REDACTED"
+                    "ABSENT" if required_action == DEFAULT_REQ_ACTION else "REDACTED"
                 )
                 self._steps_agent.add(
                     "REMEDIATION",
@@ -450,11 +452,11 @@ class CaseAuditorAgent:
             if is_incomplete:
                 verify_op = (
                     "VERIFY_RECORD_ABSENT"
-                    if required_action == "DELETE_RECORD"
+                    if required_action == DEFAULT_REQ_ACTION
                     else "VERIFY_RECORD_REDACTED"
                 )
                 verify_state = (
-                    "ABSENT" if required_action == "DELETE_RECORD" else "REDACTED"
+                    "ABSENT" if required_action == DEFAULT_REQ_ACTION else "REDACTED"
                 )
                 verify_evidence = ""
             else:

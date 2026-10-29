@@ -29,7 +29,7 @@ If so, what remediation and verification steps are legally required?"
 import pandas as pd
 
 # Local Libraries
-from src.constants import DEFAULT_RULE_CATEGORY
+from src.constants import ACTION_MAPPING, DEFAULT_REQ_ACTION, DEFAULT_RULE_CATEGORY
 from src.enums import DeletionStatus, StepOperations, StepStates
 
 
@@ -72,6 +72,31 @@ class DeletionRuleAgent:
         return DEFAULT_RULE_CATEGORY  # fallback category
 
     def get_rule_by_category(self, category: str) -> dict:
+        """Lookup policy rule based on data category and translate raw CSV actions."""
+        matched_category = self.rules[self.rules["data_category"] == category]
+
+        if not matched_category.empty:
+            category_rule = matched_category.iloc[0].to_dict()
+
+            self.rule_id = category_rule.get("rule_id")
+            self.data_category = category_rule.get("data_category")
+            self.condition = category_rule.get("condition")
+
+            # Translate raw CSV action (e.g., "DELETE", "REDACT") to StepOperations enum
+            raw_action = category_rule.get("required_action", DEFAULT_REQ_ACTION)
+            self.required_action = ACTION_MAPPING.get(
+                raw_action, StepOperations.DELETE_RECORD
+            )
+
+            # Store the mapped enum back in the returned dict so downstream methods use it
+            category_rule["required_action"] = self.required_action
+
+            return category_rule
+
+        return {}
+
+    # @depracated
+    def get_rule_by_category_old(self, category: str) -> dict:
         """Lookup policy rule based on data category."""
         matched = self.rules[self.rules["data_category"] == category]
 
@@ -102,7 +127,7 @@ class DeletionRuleAgent:
         # If a record must be ABSENT (deleted) but is still PRESENT
         if (
             finding.state == StepStates.PRESENT
-            and self.required_action == "DELETE_RECORD"
+            and self.required_action == DEFAULT_REQ_ACTION
         ):
             return DeletionStatus.INCOMPLETE
 
@@ -119,15 +144,3 @@ class DeletionRuleAgent:
             return DeletionStatus.INCOMPLETE
 
         return DeletionStatus.COMPLETE
-
-    """
-    # If a record taht should have been deleted (ABSENT required)
-    if finding.state == StepStates.PRESENT:
-        rule = self._ get_rule_by_category(finding.category)
-        self.required_action = rule.get("required_action", None)
-
-        if self.required_action and self.required_action == "DELETE_RECORD":
-            return DeletionStatus.INCOMPLETE
-
-    return DeletionStatus.COMPLETE
-    """

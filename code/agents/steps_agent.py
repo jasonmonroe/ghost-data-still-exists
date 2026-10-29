@@ -60,6 +60,7 @@ The grader parses `steps_json` as JSON. JSON object-key order and whitespace are
 import json
 
 from agents.evidence_agent import ResourceFinding
+from src.constants import DEFAULT_REQ_ACTION, OP_PRIORITY
 from src.enums import StepOperations, StepPhrases, StepStates
 
 
@@ -116,7 +117,7 @@ class StepsAgent:
     ) -> None:
         rem_state = (
             StepStates.ABSENT
-            if required_action == "DELETE_RECORD"
+            if required_action == DEFAULT_REQ_ACTION
             else StepStates.REDACTED
         )
 
@@ -150,7 +151,6 @@ class StepsAgent:
     ) -> None:
         """Helper to append individual step components."""
 
-        # If ReportedStatus == COMPLETE include only verification steps
         self._data.append(
             {
                 "phase": phase,
@@ -171,20 +171,19 @@ class StepsAgent:
         if not self._data:
             return json.dumps([])
 
-        # Define strict phase order priority
         phase_order = {
             StepPhrases.FINDING: 1,
             StepPhrases.REMEDIATION: 2,
             StepPhrases.VERIFICATION: 3,
         }
 
-        # Sort items by phase, then system_id, then resource_id
         sorted_data = sorted(
             self._data,
-            key=lambda x: (
-                phase_order.get(x["phase"], 99),
-                x["system_id"],
-                x["resource_id"],
+            key=lambda step: (
+                phase_order.get(step["phase"], 99),
+                OP_PRIORITY.get(step["operation"], 99),
+                step["system_id"],
+                step["resource_id"],
             ),
         )
 
