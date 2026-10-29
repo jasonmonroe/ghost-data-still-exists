@@ -35,7 +35,7 @@ class LlmModel:
                     system_instruction=SYSTEM_INSTR_PROMPT,
                     model=MODEL_NAME,
                     input=prompt,
-                    tools=[{"type": "google_search"}],
+                    # tools=[{"type": "google_search"}],
                     generation_config={
                         "max_output_tokens": MAX_TOKENS,
                         "temperature": 0.0,
@@ -73,8 +73,8 @@ class LlmModel:
         print(f"response datatype: {type(response)}")
         print(json.dumps(response))
 
+        # https://ai.google.dev/gemini-api/docs/quickstart.md.txt
         # Track token usage for your usage_report.md
-        # @TODO - find out if Gemini has a usage attr
         self.usage.response_id = response.id
         if getattr(response, "usage", None):
             self.usage.record(
@@ -94,47 +94,3 @@ class LlmModel:
 
         print("⚠️ Warning: Response did not extract content.")
         return response
-
-    """
-    # @depracated
-    def get_response_openai(self, prompt: str) -> dict:
-        attempt = 0
-        while attempt < RATE_LIMIT_RETRIES:
-            try:
-                response = self._client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_INSTR_PROMPT},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.0,
-                    max_completion_tokens=MAX_TOKENS,
-                    response_format={"type": "json_object"},
-                )
-
-                # Track token usage for your usage_report.md
-                if getattr(response, "usage", None):
-                    self.usage.record(
-                        model=response.model or MODEL_NAME,
-                        input_tokens=response.usage.prompt_tokens or 0,
-                        output_tokens=response.usage.completion_tokens or 0,
-                    )
-
-                content = response.choices[0].message.content
-                return json.loads(content) if content else {}
-
-            except RateLimitError:
-                if attempt >= RATE_LIMIT_RETRIES - 1:
-                    print("\n🚨 Max retries reached for rate limit. 🚨")
-                    return {"error": True}
-
-                print(f"\n⏸️ Rate limit hit. Pausing for {RATE_LIMIT_PAUSE_TIMER}s...")
-                time.sleep(RATE_LIMIT_PAUSE_TIMER)
-                attempt += 1
-
-            except (InternalServerError, Exception) as e:
-                print(f"\n🚨 API error encountered: {e} 🚨")
-                return {}
-
-        return {}
-    """

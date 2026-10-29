@@ -107,7 +107,7 @@ if __name__ == "__main__":
     run_id = get_run_id()
     print(f"Run ID: {run_id}")
 
-    banner(APP_NAME)
+    banner(APP_NAME.replace("_", " ").upper())
 
     # Start Time
     start_time = start_timer()

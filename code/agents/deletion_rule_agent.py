@@ -29,7 +29,12 @@ If so, what remediation and verification steps are legally required?"
 import pandas as pd
 
 # Local Libraries
-from src.constants import ACTION_MAPPING, DEFAULT_REQ_ACTION, DEFAULT_RULE_CATEGORY
+from src.constants import (
+    ACTION_MAPPING,
+    CATEGORY_BY_PREFIX,
+    DEFAULT_REQ_ACTION,
+    DEFAULT_RULE_CATEGORY,
+)
 from src.enums import DeletionStatus, StepOperations, StepStates
 
 
@@ -51,7 +56,8 @@ class DeletionRuleAgent:
         self.condition = None
         self.required_action = None
 
-    def get_category(self, resource_id: str) -> str:
+    # @depracated
+    def get_category2(self, resource_id: str) -> str:
         """
         Maps resource prefix to data category from deletion_rules.csv
 
@@ -61,15 +67,34 @@ class DeletionRuleAgent:
         """
         prefix = resource_id.split("_")[0]
 
-        match = self.rules[
-            self.rules["data_category"].str.contains(prefix, case=False, na=False)
+        matched_category_rule = self.rules[
+            # self.rules["data_category"].str.contains(prefix, case=False, na=False)
+            self.rules["data_category"].str.lower().str.startswith(prefix.lower())
         ]
 
-        if not match.empty:
-            self.data_category = match.iloc[0]["data_category"]
-            return match.iloc[0]["data_category"]
+        if not matched_category_rule.empty:
+            self.data_category = matched_category_rule.iloc[0]["data_category"]
+            return matched_category_rule.iloc[0]["data_category"]
 
         return DEFAULT_RULE_CATEGORY  # fallback category
+
+    def get_category(self, resource_id: str) -> str:
+        """Maps resource ID prefix cleanly to data category using explicit mapping."""
+        parts = resource_id.split("_")
+
+        # Check two-word prefixes first (e.g., audit_record, data_flow, email_delivery)
+        if len(parts) >= 3:
+            two_part_prefix = f"{parts[0]}_{parts[1]}"
+            if two_part_prefix in CATEGORY_BY_PREFIX:
+                self.data_category = CATEGORY_BY_PREFIX[two_part_prefix]
+                return self.data_category
+
+        single_prefix = parts[0]
+        if single_prefix in CATEGORY_BY_PREFIX:
+            self.data_category = CATEGORY_BY_PREFIX[single_prefix]
+            return self.data_category
+
+        return DEFAULT_RULE_CATEGORY
 
     def get_rule_by_category(self, category: str) -> dict:
         """Lookup policy rule based on data category and translate raw CSV actions."""

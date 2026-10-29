@@ -294,6 +294,10 @@ class CaseAuditorAgent:
             return self._steps_agent.compile()
 
         for finding in findings:
+            if finding.state == StepStates.UNKNOWN:
+                print("⚠️ Warning: Evidence Finding State is `UNKNOWN`")
+                continue
+
             rule = self._rules_agent.get_rule_by_category(finding.category)
             required_action = rule.get("required_action", StepOperations.DELETE_RECORD)
 
@@ -302,12 +306,13 @@ class CaseAuditorAgent:
             )
 
             # FINDING PHASE (If record is present)
-            if finding.state == StepStates.PRESENT:
-                self._steps_agent.add_finding_phase(finding)
+            # if finding.state == StepStates.PRESENT:
 
             # REMEDIATION and VERIFICATION PHASE (Only if incomplete)
             if is_incomplete:
+                self._steps_agent.add_finding_phase(finding)
                 self._steps_agent.add_remediation_phase(finding, required_action)
+
                 self._steps_agent.set_verify_incomplete(required_action)
                 self._steps_agent.add_verification_phase(finding)
             else:

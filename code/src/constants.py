@@ -2,18 +2,16 @@
 # +---------------------------------------------------------------------------+
 # |                              CONSTANTS                                    |
 # +---------------------------------------------------------------------------+
-
-# 🚨
-# ⚠️
-# 💡
-
+# 🚨 ⚠️ 💡
 import os
 import re
 from pathlib import Path
 
-from src.enums import StepOperations
+from src.enums import StepOperations, StepStates
 
-# Constants for the application
+# ============================================================================
+# 1. ENVIRONMENT & APP SETTINGS
+# ============================================================================
 
 APP_NAME = os.getenv("APP_NAME")
 MODEL_NAME = os.getenv("MODEL_NAME")
@@ -21,7 +19,11 @@ MODEL_API_KEY = os.getenv("MODEL_API_KEY")
 MODEL_API_URL = os.getenv("MODEL_API_URL")
 USE_SAMPLE = os.getenv("USE_SAMPLE", "True")
 
-# Data paths
+
+# ============================================================================
+# 2. FILE PATHS & DIRECTORIES
+# ============================================================================
+
 DATASET_PATH = Path("./dataset/")
 EVIDENCE_PATH = DATASET_PATH / "evidence"
 
@@ -37,7 +39,11 @@ DATASET_FILES = [
     "user_identities",
 ]
 
-# Miscellaneous
+
+# ============================================================================
+# 3. NUMERIC LIMITS, TIMEVALS & DEFAULTS
+# ============================================================================
+
 BANNER_PADDING = 4
 PEP8_LINE_LEN = 79
 SECONDS_IN_MIN = 60
@@ -56,6 +62,18 @@ DEFAULT_FIELD_NAME = "identifier"
 DEFAULT_RULE_CATEGORY = "general_record"
 DEFAULT_REQ_ACTION = "DELETE_RECORD"
 
+# Fallback sort priority for unknown or unmapped phases/operations
+DEFAULT_SORT_PRIORITY = 99
+
+FINDING_STEP_PHASE_ORDER = 1
+REMEDIATION_STEP_PHASE_ORDER = 2
+VERIFICATION_STEP_PHASE_ORDER = 3
+
+
+# ============================================================================
+# 4. REGULAR EXPRESSION PATTERNS
+# ============================================================================
+
 RESOURCE_ID_RE = re.compile(
     r"\b(?:account|search|analytics|support|cache|export|email_delivery|audit_record"
     r"|data_flow|backup|tombstone|legal_hold|marketing)_\d+\b"
@@ -67,11 +85,55 @@ ABSENT_HINT_RE = re.compile(
     r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE
 )
 
+
+# ============================================================================
+# 5. MAPPINGS & DICTIONARIES
+# ============================================================================
+
+CATEGORY_BY_PREFIX = {
+    "account": "USER_PROFILE",
+    "analytics": "ANALYTICS_RECORD",
+    "audit_record": "SECURITY_AUDIT_LOG",
+    "backup": "BACKUP_RESTORE_RISK",
+    "cache": "CACHE_RECORD",
+    "data_flow": "ACTIVE_DATA_FLOW",
+    "email_delivery": "EMAIL_DELIVERY_LOG",
+    "export": "USER_EXPORT",
+    "marketing": "MARKETING_LIST",
+    "search": "SEARCH_INDEX",
+    "support": "SUPPORT_TICKET",
+    "tombstone": "ACCOUNT_TOMBSTONE",
+}
+
 ACTION_MAPPING = {
     "DELETE": StepOperations.DELETE_RECORD,
     "REDACT": StepOperations.REDACT_RECORD,
     "ANONYMIZE": StepOperations.ANONYMIZE_RECORD,
     "RETAIN": StepOperations.VERIFY_RECORD_PRESENT,
+}
+
+VERIFY_OP_MAPPING = {
+    StepOperations.DELETE_RECORD: StepOperations.VERIFY_RECORD_ABSENT,
+    StepOperations.REDACT_RECORD: StepOperations.VERIFY_RECORD_REDACTED,
+    StepOperations.ANONYMIZE_RECORD: StepOperations.VERIFY_RECORD_ANONYMIZED,
+    StepOperations.DISABLE_DATA_FLOW: StepOperations.VERIFY_DATA_FLOW_DISABLED,
+    StepOperations.BLOCK_RESTORE: StepOperations.VERIFY_RESTORE_BLOCKED,
+}
+
+STATE_MAPPING = {
+    StepOperations.DELETE_RECORD: StepStates.ABSENT,
+    StepOperations.REDACT_RECORD: StepStates.REDACTED,
+    StepOperations.ANONYMIZE_RECORD: StepStates.ANONYMIZED,
+    StepOperations.DISABLE_DATA_FLOW: StepStates.DISABLED,
+    StepOperations.BLOCK_RESTORE: StepStates.BLOCKED,
+}
+
+VERIFY_STATE_MAPPING = {
+    StepOperations.DELETE_RECORD: StepStates.ABSENT,
+    StepOperations.REDACT_RECORD: StepStates.REDACTED,
+    StepOperations.ANONYMIZE_RECORD: StepStates.ANONYMIZED,
+    StepOperations.DISABLE_DATA_FLOW: StepStates.DISABLED,
+    StepOperations.BLOCK_RESTORE: StepStates.BLOCKED,
 }
 
 OP_PRIORITY = {
@@ -95,37 +157,45 @@ OP_PRIORITY = {
     StepOperations.VERIFY_RESTORE_BLOCKED: 6,
 }
 
-
-# Personal Identifiiable Information (PII)
-PII_FIELDS = {
-    "name",
-    "full_name",
-    "email",
-    "phone",
-    "email_hash",
-    "requester_name",
-    "requester_email",
-    "requester_phone",
-    "owner_email",
-    "owner_phone",
-    "customer_email",
-    "display_name",
-}
-
-SYSTEM_BY_PREFIX = {  # resource prefix → output system_id
+SYSTEM_BY_PREFIX = {
     "account": "account_service",
-    "search": "search_service",
-    "support": "support_platform",
     "analytics": "analytics_platform",
     "audit_record": "security_service",
-    "data_flow": "integration_service",
     "backup": "backup_service",
+    "data_flow": "integration_service",
     "export": "export_service",
+    "search": "search_service",
+    "support": "support_platform",
+    "tombstone": "identity_service",
+}
+
+TARGET_SYSTEMS = {
+    "cache": "cache_service",
+    "email_delivery": "email_delivery_service",
+    "marketing": "marketing_platform",
     "tombstone": "identity_service",
 }
 
 
-# Case
+# ============================================================================
+# 6. DOMAIN-SPECIFIC SETS & KEYWORD TUPLES
+# ============================================================================
+
+PERSONAL_INFO_FIELDS = {
+    "customer_email",
+    "display_name",
+    "email",
+    "email_hash",
+    "full_name",
+    "name",
+    "owner_email",
+    "owner_phone",
+    "phone",
+    "requester_email",
+    "requester_name",
+    "requester_phone",
+}
+
 VALID_KEYPHRASES = (
     "close my account",
     "delete my account",
@@ -155,14 +225,11 @@ NON_DELETION_KEYWORDS = (
     "reset my password",
 )
 
-TARGET_SYSTEMS = {
-    "cache": "cache_service",
-    "email_delivery": "email_delivery_service",
-    "marketing": "marketing_platform",
-    "tombstone": "identity_service",
-}
 
-# Prompt Instructions
+# ============================================================================
+# 7. LLM PROMPTS & TEMPLATES
+# ============================================================================
+
 SYSTEM_INSTR_PROMPT = """
 You are a consumer behavioral expert and data privacy compliance auditor. 
 Your task is to analyze customer messages to determine if they explicitly 
@@ -185,7 +252,6 @@ Return ONLY the exact boolean value True or False. Do not include markdown
 fences, prose, or explanation.
 """.strip()
 
-
 VALIDITY_PROMPT = """
 As a user behavioral expert, analyze this user request to determine if 
 they're explicitly requesting to delete, erase, close, or remove their 
@@ -203,7 +269,3 @@ Return ONLY the boolean value True or False.
 CUSTOMER REQUEST:
 "{request_text}"
 """.strip()
-
-# Prompt to obtain steps according to the steps agent.
-# @TODO - check if needed
-STEPS_PROMPT = """ """.strip()

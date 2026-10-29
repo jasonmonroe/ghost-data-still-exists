@@ -41,9 +41,9 @@ from src.constants import (
     DATASET_PATH,
     DEFAULT_FIELD_NAME,
     LINK_RE,
+    PERSONAL_INFO_FIELDS,
     PHONE_LEN,
     PHONE_RE,
-    PII_FIELDS,
     RESOURCE_ID_RE,
     TARGET_SYSTEMS,
     TRACE_ID_RE,
@@ -98,15 +98,23 @@ class EvidenceAgent:
 
         # every file <= audit_at (needed for absence proof)
         all_evidence = self._get_evidence()
-
-        # files that mention the user
         filtered_evidence = self._filter(all_evidence)
         resource_ids = self._get_resources(filtered_evidence)
 
-        return [
-            self._build_finding(rid, all_evidence, rules_agent)
-            for rid in sorted(resource_ids)
-        ]
+        findings = []
+        for resource_id in sorted(resource_ids):
+            finding = self._build_finding(resource_id, all_evidence, rules_agent)
+
+            # Only keep findings that are successfully resolved
+            if finding and finding.state != StepStates.UNKNOWN:
+                findings.append(finding)
+
+        return findings
+
+        # return [
+        #    self._build_finding(rid, all_evidence, rules_agent)
+        #    for rid in sorted(resource_ids)
+        # ]
 
     def _get_resources(self, matched: list[dict]) -> set[str]:
         """
@@ -186,6 +194,7 @@ class EvidenceAgent:
             # Snapshot lists other records of this type but not this one -> absent
             if self._is_snapshot(f) and any(same_type_re.search(c) for c in chunks):
                 return StepStates.ABSENT, f["file_id"]
+
         return StepStates.UNKNOWN, None
 
     @staticmethod
@@ -200,17 +209,18 @@ class EvidenceAgent:
         after = timeline["event_time"].max() if not timeline.empty else ""
         state, evidence_id = self._state(resource_id, after, evidence)
 
-        # @TODO identifier fields still filled -> REPORT_EXPOSED_PII (StepOperations.__)
+        category = rules_agent.get_category(resource_id)
         exposed = frozenset(
             self._get_exposed(state, evidence, resource_id, evidence_id)
         )
+        system_id = self._system_by_prefix.get(
+            prefix_of(resource_id), str(StepStates.UNKNOWN.value).lower()
+        )
 
         return ResourceFinding(
-            system_id=self._system_by_prefix.get(
-                prefix_of(resource_id), str(StepStates.UNKNOWN.value).lower()
-            ),
+            system_id=system_id,
             resource_id=resource_id,
-            category=rules_agent.get_category(resource_id),
+            category=category,
             state=str(state.value),
             evidence_id=evidence_id,
             exposed_fields=exposed,
@@ -219,6 +229,81 @@ class EvidenceAgent:
         )
 
     def _get_exposed(
+        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
+    ) -> set[str]:
+        """
+        Inspects the structured proof record dictionary to find exact PII field names
+        that are still populated, ignoring reference fields.
+        """
+        exposed: set[str] = set()
+        if state != StepStates.PRESENT or not evidence_id:
+            return exposed
+
+        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
+        if not target or target["file_path"].suffix.lower() not in {".json", ".sql"}:
+            return exposed
+
+        for chunk in self._chunks(target["content"]):
+            if resource_id in chunk:
+                self._inspect_chunk_for_personal_info(chunk, exposed)
+                break
+
+        return exposed
+
+    @staticmethod
+    def _inspect_chunk_for_personal_info(chunk, exposed: set[str]) -> None:
+        """Helper to parse a chunk as a dict and check PII field keys directly."""
+        try:
+            record = json.loads(chunk) if isinstance(chunk, str) else chunk
+            if isinstance(record, dict):
+                # Check each PII field in the record dict
+                for field in PERSONAL_INFO_FIELDS:
+                    value = record.get(field)
+                    # A field is exposed if it exists and is not null/empty
+                    if value not in (None, "", "null"):
+                        exposed.add(field)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # @depracated
+    def _get_exposed3(
+        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
+    ) -> set[str]:
+        """
+        Inspects the structured proof record to find exact PII field names
+        that are still populated (not null or empty).
+        """
+        exposed: set[str] = set()
+        if state != StepStates.PRESENT or not evidence_id:
+            return exposed
+
+        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
+        if not target or target["file_path"].suffix.lower() not in {".json", ".sql"}:
+            return exposed
+
+        for chunk in self._chunks(target["content"]):
+            if resource_id in chunk:
+                self._inspect_chunk_for_personal_info(chunk, exposed)
+                break
+
+        return exposed
+
+    @staticmethod
+    def _inspect_chunk_for_personal_info2(chunk, exposed: set[str]) -> None:
+        """Helper to parse a chunk and collect exposed PII fields safely."""
+        try:
+            chunk_data = json.loads(chunk) if isinstance(chunk, str) else chunk
+            if isinstance(chunk_data, dict):
+                for field in PERSONAL_INFO_FIELDS:
+                    value = chunk_data.get(field)
+                    if value not in (None, "", "null"):
+                        exposed.add(field)
+        except (json.JSONDecodeError, TypeError) as e:
+            # Cleanly handle non-JSON text chunks without catching blind Exception
+            print(f"🚨 Error: {e}")
+
+    # @depracated
+    def _get_exposed_works(
         self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
     ) -> set[str]:
         exposed: set[str] = set()

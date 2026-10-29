@@ -4,7 +4,9 @@
 +-----------------------------------------------------------------------------+
 |                                   STEPS AGENT                               |
 +-----------------------------------------------------------------------------+
-
+Ordered JSON array of findings, remediation actions, and verification checks
+Takes data such as phase, operation, state, meaning maps it with a matrix
+and outputs the correct value.
 
 | `steps_json` | Ordered JSON array of findings, remediation actions, and verification checks |
 
@@ -60,7 +62,16 @@ The grader parses `steps_json` as JSON. JSON object-key order and whitespace are
 import json
 
 from agents.evidence_agent import ResourceFinding
-from src.constants import DEFAULT_REQ_ACTION, OP_PRIORITY
+from src.constants import (
+    DEFAULT_SORT_PRIORITY,
+    FINDING_STEP_PHASE_ORDER,
+    OP_PRIORITY,
+    REMEDIATION_STEP_PHASE_ORDER,
+    STATE_MAPPING,
+    VERIFICATION_STEP_PHASE_ORDER,
+    VERIFY_OP_MAPPING,
+    VERIFY_STATE_MAPPING,
+)
 from src.enums import StepOperations, StepPhrases, StepStates
 
 
@@ -82,18 +93,12 @@ class StepsAgent:
         self._verify_evidence = finding.evidence_id or ""
 
     def set_verify_incomplete(self, required_action: str) -> None:
-        self._verify_op = (
-            StepOperations.VERIFY_RECORD_ABSENT
-            if required_action == StepOperations.DELETE_RECORD
-            else StepOperations.VERIFY_RECORD_REDACTED
+        self._verify_op = VERIFY_OP_MAPPING.get(
+            required_action, StepOperations.VERIFY_RECORD_ABSENT
         )
-
-        self._verify_state = (
-            StepStates.ABSENT
-            if required_action == StepOperations.DELETE_RECORD
-            else StepStates.REDACTED
+        self._verify_state = VERIFY_STATE_MAPPING.get(
+            required_action, StepStates.ABSENT
         )
-
         self._verify_evidence = ""
 
     def add_finding_phase(self, finding: ResourceFinding) -> None:
@@ -115,18 +120,16 @@ class StepsAgent:
     def add_remediation_phase(
         self, finding: ResourceFinding, required_action: str
     ) -> None:
-        rem_state = (
-            StepStates.ABSENT
-            if required_action == DEFAULT_REQ_ACTION
-            else StepStates.REDACTED
-        )
+
+        # Map required action to its target state
+        remediation_state = STATE_MAPPING.get(required_action, StepStates.ABSENT)
 
         self.add(
             StepPhrases.REMEDIATION,
             finding.system_id,
             finding.resource_id,
             required_action,
-            rem_state,
+            remediation_state,
             "",
         )
 
@@ -172,16 +175,16 @@ class StepsAgent:
             return json.dumps([])
 
         phase_order = {
-            StepPhrases.FINDING: 1,
-            StepPhrases.REMEDIATION: 2,
-            StepPhrases.VERIFICATION: 3,
+            StepPhrases.FINDING: FINDING_STEP_PHASE_ORDER,
+            StepPhrases.REMEDIATION: REMEDIATION_STEP_PHASE_ORDER,
+            StepPhrases.VERIFICATION: VERIFICATION_STEP_PHASE_ORDER,
         }
 
         sorted_data = sorted(
             self._data,
             key=lambda step: (
-                phase_order.get(step["phase"], 99),
-                OP_PRIORITY.get(step["operation"], 99),
+                phase_order.get(step["phase"], DEFAULT_SORT_PRIORITY),
+                OP_PRIORITY.get(step["operation"], DEFAULT_SORT_PRIORITY),
                 step["system_id"],
                 step["resource_id"],
             ),
