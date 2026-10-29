@@ -59,19 +59,85 @@ The grader parses `steps_json` as JSON. JSON object-key order and whitespace are
 
 import json
 
+from agents.evidence_agent import ResourceFinding
+from src.enums import StepOperations, StepPhrases, StepStates
+
 
 class StepsAgent:
     def __init__(self):
         self._data = []
 
-    def check_finding_phase(self):
-        pass
+        self._verify_op = None
+        self._verify_state = None
+        self._verify_evidence = None
 
-    def check_remediation_phase(self):
-        pass
+    def set_verify_complete(self, finding: ResourceFinding):
+        self._verify_op = (
+            StepOperations.VERIFY_RECORD_ABSENT
+            if finding.state == StepStates.ABSENT
+            else StepOperations.VERIFY_RECORD_PRESENT
+        )
+        self._verify_state = finding.state
+        self._verify_evidence = finding.evidence_id or ""
 
-    def check_verification_phase(self):
-        pass
+    def set_verify_incomplete(self, required_action: str) -> None:
+        self._verify_op = (
+            StepOperations.VERIFY_RECORD_ABSENT
+            if required_action == StepOperations.DELETE_RECORD
+            else StepOperations.VERIFY_RECORD_REDACTED
+        )
+
+        self._verify_state = (
+            StepStates.ABSENT
+            if required_action == StepOperations.DELETE_RECORD
+            else StepStates.REDACTED
+        )
+
+        self._verify_evidence = ""
+
+    def add_finding_phase(self, finding: ResourceFinding) -> None:
+        op = (
+            StepOperations.REPORT_EXPOSED_PII
+            if finding.exposed_fields
+            else StepOperations.REPORT_REMAINING_RECORD
+        )
+
+        self.add(
+            phase=StepPhrases.FINDING,
+            system_id=finding.system_id,
+            resource_id=finding.resource_id,
+            operation=op,
+            state=finding.state,
+            evidence_id=finding.evidence_id,
+        )
+
+    def add_remediation_phase(
+        self, finding: ResourceFinding, required_action: str
+    ) -> None:
+        rem_state = (
+            StepStates.ABSENT
+            if required_action == "DELETE_RECORD"
+            else StepStates.REDACTED
+        )
+
+        self.add(
+            StepPhrases.REMEDIATION,
+            finding.system_id,
+            finding.resource_id,
+            required_action,
+            rem_state,
+            "",
+        )
+
+    def add_verification_phase(self, finding: ResourceFinding) -> None:
+        self.add(
+            phase=StepPhrases.VERIFICATION,
+            system_id=finding.system_id,
+            resource_id=finding.resource_id,
+            operation=self._verify_op,
+            state=self._verify_state,
+            evidence_id=self._verify_evidence,
+        )
 
     def add(
         self,
@@ -116,3 +182,6 @@ class StepsAgent:
             steps.append(step_item)
 
         return json.dumps(steps)
+
+    def count(self) -> int:
+        return len(self._data)

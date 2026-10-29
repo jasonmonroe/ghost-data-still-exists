@@ -36,7 +36,7 @@ class CaseAuditorAgent:
         self._data = dataset
         self._model = LlmModel()
         self._evidence_agent = EvidenceAgent(
-            dataset.get("evidence"),  # @TODO - may not need
+            dataset.get("evidence"),
         )
         self._rules_agent = DeletionRuleAgent(dataset.get("deletion_rules"))
         self._steps_agent = StepsAgent()
@@ -68,17 +68,14 @@ class CaseAuditorAgent:
                 evidence_findings = []
             else:
                 evidence_findings = self._analyze(user_dataset)
-                # user_evidence_dataset = user_dataset
-                # user_evidence_dataset["evidence"] = evidence_findings
-
-                # user_evidence_dataset = {**user_dataset, **evidence_dataset}
 
                 # With results lets build a prompt and get a response to determine final DeletionStatus
-                # @deprecated - builder = PromptBuilder(user_evidence_dataset, case_s)
                 deletion_status = self._get_deletion_status(evidence_findings)
 
             # Pass the findings directly into _finalize()
             steps_json = self._finalize(deletion_status, evidence_findings)
+
+            print(f"Step Count: {self._steps_agent.count()}")
 
         return self._get_output(deletion_status, steps_json)
 
@@ -156,6 +153,7 @@ class CaseAuditorAgent:
             return {
                 "evidence_files": evidence_files_df,
                 "system_activity": system_activity_df,
+                "activity_pool": pd.DataFrame,
                 "user_audit_log": user_audit_log_df,
                 "user_identities": user_identities_df,
             }
@@ -165,7 +163,6 @@ class CaseAuditorAgent:
 
         # Get user history.  It's possible that this could be empty.
         user_audit_log = user_audit_log_df[user_audit_log_df["user_id"] == user_id]
-
         system_activity = self._filter_system_activity(system_activity_df)
 
         # Prove the system activity with the evidence.  Choose which file to
@@ -174,14 +171,6 @@ class CaseAuditorAgent:
         evidence_files = evidence_files_df[
             evidence_files_df["captured_at"] <= self.audit_at
         ]
-
-        # @TODO - might be over filtering
-        # if target_system:
-        #    origin_text = target_system.split("_")[0]
-        #    # Find all rows where the origin column contains system_activity.target_system
-        #    evidence_files = evidence_files[
-        #        evidence_files["origin"].str.contains(origin_text, na=False)
-        #    ]
 
         # Returning filtered data
         return {
@@ -209,7 +198,7 @@ class CaseAuditorAgent:
             system_activity_df["event_time"].between(earliest, latest)
         ]
 
-    def _get_delete_status(self, evidence_findings: dict) -> str:
+    def _get_delete_status(self, evidence_findings: list[ResourceFinding]) -> str:
         """
         ** Evaluate all findings **
         For each case, your program has to output one of three statuses:
@@ -275,18 +264,15 @@ class CaseAuditorAgent:
 
         return deletion_status
 
-    # @TODO - too much complexity in one function
-    def _finalize_keep(self, deletion_status: str, findings: list) -> str:
+    def _finalize(self, deletion_status: str, findings: list[ResourceFinding]):
         """Delivering the Solution
         Your solution must process all the data and generate a final file called
         output.csv.
         For Complete or Incomplete cases, your code must output a structured
         list of steps (steps_json) detailing what findings were made, what
         remediation steps are needed to clean up the ghost data, and what
-        verification checks must pass to make sure it stays gone."""
+        verification checks must pass to make sure it stays gone.
 
-        # Format the result into the exact steps_json array structure
-        """
         ```json
         {
         "step_no": 1,
@@ -299,6 +285,39 @@ class CaseAuditorAgent:
         }
         ```
         """
+        if deletion_status not in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
+            return self._steps_agent.compile()
+
+        for finding in findings:
+            rule = self._rules_agent._get_rule_by_category(finding.category)
+            required_action = rule.get("required_action", StepOperations.DELETE_RECORD)
+
+            is_incomplete = (
+                self._rules_agent.evaluate(finding) == DeletionStatus.INCOMPLETE
+            )
+
+            # FINDING PHASE (If record is present)
+            if finding.state == StepStates.PRESENT:
+                self._steps_agent.add_finding_phase(finding)
+
+            # REMEDIATION and VERIFICATION PHASE (Only if incomplete)
+            if is_incomplete:
+                self._steps_agent.add_remediation_phase(finding, required_action)
+                self._steps_agent.set_verify_incomplete(required_action)
+            else:
+                self._steps_agent.set_verify_complete(finding)
+                self._steps_agent.add_verification_phase()
+
+        return self._steps_agent.compile()
+
+    def _get_output(self, deletion_status: str, steps_json: str) -> list:
+        return [self.case_id, deletion_status, json.loads(steps_json)]
+
+    ### --- IGNORE BELOW --- ###
+
+    # @depracated - too much complexity in one function
+    def _finalize_keep(self, deletion_status: str, findings: list) -> str:
+
         if deletion_status not in [DeletionStatus.COMPLETE, DeletionStatus.INCOMPLETE]:
             return self._steps_agent.compile()
 
@@ -467,6 +486,3 @@ class CaseAuditorAgent:
         steps_json = self._steps_agent.compile()
 
         return steps_json
-
-    def _get_output(self, deletion_status: str, steps_json: list) -> list:
-        return [self.case_id, deletion_status, json.load(steps_json)]
