@@ -1,6 +1,10 @@
 # code/agents/case_auditor_agent.py
 
 """
++---------------------------------------------------------------------------+
+|                            CASE AUDITOR AGENT                             |
++---------------------------------------------------------------------------+
+
 Case Auditor Agent
 
 An AI-powered automated auditor that investigates data deletion requests for
@@ -39,7 +43,6 @@ class CaseAuditorAgent:
             dataset.get("evidence"),
         )
         self._rules_agent = DeletionRuleAgent(dataset.get("deletion_rules"))
-        self._steps_agent = StepsAgent()
 
         self.case_id = None
         self.email = None
@@ -50,6 +53,8 @@ class CaseAuditorAgent:
         self.request_text = None
 
     def audit_by_case(self, case_s: pd.Series) -> list:
+        self._steps_agent = StepsAgent()
+
         # main public function
         for col, value in case_s.items():
             if hasattr(self, col):
@@ -63,7 +68,7 @@ class CaseAuditorAgent:
             # Confirmed, customer wants account deleted
             user_dataset = self._filter_by_user()
 
-            if user_dataset.get("user_identity") is None:
+            if user_dataset.get("user_identities") is None:
                 deletion_status = DeletionStatus.COMPLETE
                 evidence_findings = []
             else:
@@ -109,7 +114,6 @@ class CaseAuditorAgent:
         findings against deletion_rules.csv.
         """
 
-        # Return dict of type list[ResourceFinding]
         return self._evidence_agent.search(user_dataset, self._rules_agent)
 
     def _filter_by_user(self) -> dict:
@@ -153,7 +157,7 @@ class CaseAuditorAgent:
             return {
                 "evidence_files": evidence_files_df,
                 "system_activity": system_activity_df,
-                "activity_pool": pd.DataFrame,
+                "activity_pool": pd.DataFrame(),
                 "user_audit_log": user_audit_log_df,
                 "user_identities": user_identities_df,
             }
@@ -198,7 +202,7 @@ class CaseAuditorAgent:
             system_activity_df["event_time"].between(earliest, latest)
         ]
 
-    def _get_delete_status(self, evidence_findings: list[ResourceFinding]) -> str:
+    def _get_deletion_status(self, evidence_findings: list[ResourceFinding]) -> str:
         """
         ** Evaluate all findings **
         For each case, your program has to output one of three statuses:
@@ -223,7 +227,7 @@ class CaseAuditorAgent:
             if status == DeletionStatus.INCOMPLETE:
                 return DeletionStatus.INCOMPLETE
 
-            return DeletionStatus.COMPLETE
+        return DeletionStatus.COMPLETE
 
     # @deprecated
     def _get_deletion_status_old(self, evidence_findings: list) -> str:
@@ -311,7 +315,11 @@ class CaseAuditorAgent:
         return self._steps_agent.compile()
 
     def _get_output(self, deletion_status: str, steps_json: str) -> list:
-        return [self.case_id, deletion_status, json.loads(steps_json)]
+        parsed_steps = (
+            json.loads(steps_json) if isinstance(steps_json, str) else steps_json
+        )
+
+        return [self.case_id, deletion_status, parsed_steps]
 
     ### --- IGNORE BELOW --- ###
 

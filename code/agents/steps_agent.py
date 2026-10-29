@@ -168,6 +168,41 @@ class StepsAgent:
         retrus the final JSON string for steps_json.
         Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
         """
+        if not self._data:
+            return json.dumps([])
+
+        # Define strict phase order priority
+        phase_order = {
+            StepPhrases.FINDING: 1,
+            StepPhrases.REMEDIATION: 2,
+            StepPhrases.VERIFICATION: 3,
+        }
+
+        # Sort items by phase, then system_id, then resource_id
+        sorted_data = sorted(
+            self._data,
+            key=lambda x: (
+                phase_order.get(x["phase"], 99),
+                x["system_id"],
+                x["resource_id"],
+            ),
+        )
+
+        steps = []
+        for idx, item in enumerate(sorted_data, start=1):
+            step_item = item.copy()
+            step_item["step_no"] = idx
+            steps.append(step_item)
+
+        return json.dumps(steps)
+
+    # @depracated
+    def compile_old(self) -> str:
+        """
+        Compiles all added steps, enforces consecutive numbering starting and
+        retrus the final JSON string for steps_json.
+        Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
+        """
 
         if not self._data:
             return json.dumps([])

@@ -193,7 +193,6 @@ class EvidenceAgent:
         """Only full listings (SQL tables, JSON record sets) can prove absence by omission."""
         return f["file_path"].suffix.lower() in {".sql", ".json"}
 
-    # -------------------------------------------------------------- D. finding
     def _build_finding(
         self, resource_id: str, evidence: list[dict], rules_agent
     ) -> ResourceFinding:
@@ -215,14 +214,42 @@ class EvidenceAgent:
             state=str(state.value),
             evidence_id=evidence_id,
             exposed_fields=exposed,
-            attributes={
-                # "enabled": True,
-                # "restore_allowed": False,
-            },
+            attributes={},
             timeline=tuple(timeline["activity_id"]),
         )
 
     def _get_exposed(
+        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
+    ) -> set[str]:
+        exposed: set[str] = set()
+        if state != StepStates.PRESENT or not evidence_id:
+            return exposed
+
+        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
+        if not target:
+            return exposed
+
+        # Only inspect structured JSON/SQL chunks for PII fields
+        if target["file_path"].suffix.lower() not in {".json", ".sql"}:
+            return exposed
+
+        for chunk in self._chunks(target["content"]):
+            if resource_id in chunk:
+                try:
+                    record = json.loads(chunk) if isinstance(chunk, str) else chunk
+                    if isinstance(record, dict):
+                        for field in PII_FIELDS:
+                            value = record.get(field)
+                            if value not in (None, "", "null"):
+                                exposed.add(field)
+                        break
+                except Exception:
+                    continue
+
+        return exposed
+
+    # @depracted
+    def _get_exposed_2(
         self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
     ) -> set[str]:
         """
@@ -266,6 +293,7 @@ class EvidenceAgent:
 
         return exposed
 
+    # @depracated
     def _get_exposed_old(
         self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
     ) -> set[str]:
@@ -299,7 +327,6 @@ class EvidenceAgent:
 
         return exposed
 
-    # -------------------------------------------------------------- matching
     def _get_search_terms(self) -> tuple[set[str], set[str]]:
         """(text terms, phone digit strings) for this user: current + historical."""
         user_identity = self.user["user_identities"].iloc[0]
@@ -376,6 +403,7 @@ class EvidenceAgent:
         raw log lines). The agent breaks files into logical "chunks" so that
         finding a user identifier right next to a resource ID in the same chunk
         proves they belong together:
+
         SQL (.sql): Converts every table row into a self-contained JSON string
         chunk.
         JSON (.json): Recursively drills down into nested dictionaries to extract
@@ -400,6 +428,7 @@ class EvidenceAgent:
             return [json.dumps(r, default=str) for r in records] or [
                 json.dumps(content, default=str)
             ]
+
         return self._text_chunks(str(content))
 
     def _json_records(self, node):

@@ -1,4 +1,4 @@
-# code/agents/delition_rule_agent.py
+# code/agents/deletion_rule_agent.py
 
 """
 +-----------------------------------------------------------------------------+
@@ -42,8 +42,8 @@ class DeletionRuleAgent:
         - no active sync, import, or restore path can recreate the data;
         - retained records contain only the identifiers permitted by the rules; and
         - records that must be retained remain available.
-
         """
+
         self.rules = deletion_rules
 
         self.rule_id = None
@@ -52,12 +52,15 @@ class DeletionRuleAgent:
         self.required_action = None
 
     def get_category(self, resource_id: str) -> str:
-        """Maps resource prefix to data category from deletion_rules.csv"""
+        """
+        Maps resource prefix to data category from deletion_rules.csv
+
+        Example lookup against rules DataFrame
+        Assuming deletion_rules.csv has columns like 'prefix' or 'data_category'
+        You can match based on your dataset's specific column structure
+        """
         prefix = resource_id.split("_")[0]
 
-        # Example lookup against rules DataFrame
-        # Assuming deletion_rules.csv has columns like 'prefix' or 'data_category'
-        # You can match based on your dataset's specific column structure
         match = self.rules[
             self.rules["data_category"].str.contains(prefix, case=False, na=False)
         ]
