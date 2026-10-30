@@ -55,10 +55,6 @@ def format_time(duration: float) -> str:
     return f"{hrs}h {mins}m {secs}s {msec}ms"
 
 
-def get_date():
-    return time.strftime("%Y-%m-%d")
-
-
 def get_progress_bar(idx: int, total: int) -> str:
     """
     Displays progress of claim analysis.

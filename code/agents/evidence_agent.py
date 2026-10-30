@@ -16,7 +16,7 @@ Turns raw evidence into a per-resource ledger for one case.
     all_evidence (files captured <= audit_at)
        ├─ A. _get_resources()  which records belong to this user
        ├─ B. _timeline()        what was done to each record (claims)
-       ├─ C. _state()           what is true at audit_at (proof + file_id)
+       ├─ C. _get_state()           what is true at audit_at (proof + file_id)
        └─ D. ResourceFinding    one per record → DecisionRuleAgent
 """
 
@@ -113,7 +113,7 @@ class EvidenceAgent:
 
         return findings
 
-    def _get_resources(self, matched: list[dict]) -> set[str]:
+    def _get_resources(self, matched: list[dict], all_evidence: list[dict]) -> set[str]:
         """
         Pass filtered evidence in and get the resource data from system activities.
         Parse all evidence data into chunks and check if any chunk matches any
@@ -122,11 +122,29 @@ class EvidenceAgent:
         resources: set[str] = set()
 
         # The case's own workflow events (reported_at +/- window)
+        # Note: This is causing an issue and needs to be done over...
         resources |= {
             clean_str(r)
             for r in self.user["system_activity"]["resource_id"]
             if clean_str(r)
         }
+
+        # The hybrid: delete the block, keep one narrow exception
+        # Keep a window record only when both of these are true:
+
+        # It was logged by the deletion worker (source_system), and
+        # No evidence file up to audit_at mentions that resource ID anywhere
+
+        # Window exception: the deletion worker touched it at request time AND it
+        # has vanished from every evidence file <= audit_at (a deleted record
+        # can't co-occur with the user's identifiers, so nothing else finds it).
+        # window = self.user["system_activity"]
+        # workflow = window[window["source_system"] == WORKFLOW_SOURCE_SYSTEM]
+        # mentioned = self._mentioned_resource_ids(all_evidence)
+        # for raw_id in workflow["resource_id"]:
+        #    resource_id = clean_str(raw_id)
+        #    if resource_id and resource_id not in mentioned:
+        #        resources.add(resource_id)
 
         # Resources in the SAME line / row / record / trace as a user identifier
         for f in matched:
@@ -145,6 +163,15 @@ class EvidenceAgent:
 
         return resources
 
+    def _mentioned_resource_ids(self, evidence: list[dict]) -> set[str]:
+        """Every resource ID that appears anywhere in these evidence files."""
+        ids: set[str] = set()
+        for f in evidence:
+            for chunk in self._get_content_chunks(f["content"]):
+                ids |= set(RESOURCE_ID_RE.findall(chunk))
+
+        return ids
+
     def _timeline(self, resource_id: str) -> pd.DataFrame:
         pool = self._activity_pool()
         return pool[pool["resource_id"] == resource_id].sort_values(
@@ -156,7 +183,7 @@ class EvidenceAgent:
         pool = self.user.get("activity_pool")
         return pool if pool is not None else self.user["system_activity"]
 
-    def _state(
+    def _get_state(
         self, resource_id: str, after: str, evidence: list[dict]
     ) -> tuple[str, str | None]:
         """
@@ -262,7 +289,7 @@ class EvidenceAgent:
     ) -> ResourceFinding:
         timeline = self._timeline(resource_id)
         after = timeline["event_time"].max() if not timeline.empty else ""
-        state, evidence_id = self._state(resource_id, after, evidence)
+        state, evidence_id = self._get_state(resource_id, after, evidence)
 
         category = rules_agent.get_category(resource_id)
         inspected = self._get_exposed(state, evidence, resource_id, evidence_id)

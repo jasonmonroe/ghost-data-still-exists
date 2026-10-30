@@ -62,6 +62,7 @@ SECONDS_IN_HR = SECONDS_IN_MIN * SECONDS_IN_MIN
 SECONDS_TO_MSEC = 1000
 MAX_TOKENS = 2048
 DATETIME_DURATION = 10
+WORKFLOW_SOURCE_SYSTEM = "deletion_worker"
 RATE_LIMIT_PAUSE_TIMER = 3
 RATE_LIMIT_RETRIES = 4
 RATE_LIMIT_STATUS_ERR_CODE = 429
@@ -72,8 +73,8 @@ PHONE_LEN = 7
 OUTPUT_COLUMNS = ["case_id", "deletion_status", "steps_json"]
 DEFAULT_RULE_CATEGORY = "general_record"
 
-# If the LLM cannot classify a request (outage, rate limit, bad output), treat it
-# as a deletion request. Missing real leftover data is the failure this audit
+# If the LLM cannot classify a request (outage, rate limit, bad output), treat
+# it as a deletion request. Missing real leftover data is the failure this audit
 # exists to prevent; a false NOT_APPLICABLE would hide it.
 VALIDITY_FALLBACK_ON_LLM_ERROR = True
 

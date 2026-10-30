@@ -221,8 +221,6 @@ def parse_steps(raw) -> list[dict]:
     return steps if isinstance(steps, list) else []
 
 
-# def step_key(step: dict) -> tuple:
-#    return tuple(step.get(f) for f in STEP_FIELDS)
 def step_key(step: dict) -> tuple:
     return (
         str(step.get("phase", "")).strip().lower(),

@@ -154,7 +154,10 @@ class CaseAuditorAgent:
         user_identity = user_identities_df[
             user_identities_df["email"].str.lower() == email
         ]
+
+        # Scenario 1: No user found initially - attempt fallback to historical logs
         if user_identity.empty:
+            print("⚠️ Warning: User unidentified, checking historical logs...")
             email_changes = user_audit_log_df[
                 user_audit_log_df["field_name"] == "email"
             ]
@@ -166,13 +169,16 @@ class CaseAuditorAgent:
                 user_identities_df["user_id"].isin(historical["user_id"])
             ]
 
-        if len(user_identity) != 1:
-            # Return the unfiltered datasets
+        # Determine final status based on the exact user count
+        user_count = len(user_identity)
+
+        if user_count == 0:
+            # Scenario 2: Zero users found (even after historical log check)
+            # If it's still empty log a warning.
             report_issue(
                 WARNING,
-                f"Case {self.case_id}: user {self.email} unknown or multiple users returned.",
+                f"⚠️ Case {self.case_id}: User {self.email} completely unknown.",
             )
-
             return {
                 "evidence_files": evidence_files_df,
                 "system_activity": system_activity_df,
@@ -181,30 +187,45 @@ class CaseAuditorAgent:
                 "user_identities": user_identities_df,
             }
 
-        # User identified, now lets perform light filtering on corresponding data
-        user_id = user_identity.iloc[0].to_dict()["user_id"]
+        elif user_count > 1:
+            # Scenario 3: Ambiguous results (multiple matching users returned)
+            report_issue(
+                WARNING,
+                f"⚠️ Case {self.case_id}: Multiple users matching {self.email} returned.",
+            )
+            return {
+                "evidence_files": evidence_files_df,
+                "system_activity": system_activity_df,
+                "activity_pool": pd.DataFrame(),
+                "user_audit_log": user_audit_log_df,
+                "user_identities": user_identities_df,
+            }
 
-        # Get user history.  It's possible that this could be empty.
-        user_audit_log = user_audit_log_df[user_audit_log_df["user_id"] == user_id]
-        system_activity = self._filter_system_activity(system_activity_df)
+        else:
+            # Scenario 4: Exactly 1 user found (Success path)
+            user_id = user_identity.iloc[0]["user_id"]
 
-        # Prove the system activity with the evidence.  Choose which file to
-        # cite by getting the target_system captured_at or before audit_date
-        # Filter out evidence files to prevent looking at future evidence
-        evidence_files = evidence_files_df[
-            evidence_files_df["captured_at"] <= self.audit_at
-        ]
+            # Accessing directly via column index is faster than .to_dict()
+            print(f"😎 User identified as {user_id}")
 
-        # Returning filtered data
-        return {
-            "evidence_files": evidence_files,
-            "system_activity": system_activity,
-            "activity_pool": system_activity_df[  # everything <= audit_at (timelines)
-                system_activity_df["event_time"] <= self.audit_at
-            ],
-            "user_audit_log": user_audit_log,
-            "user_identities": user_identity,
-        }
+            # Get user history
+            user_audit_log = user_audit_log_df[user_audit_log_df["user_id"] == user_id]
+            system_activity = self._filter_system_activity(system_activity_df)
+
+            # Filter out future evidence files
+            evidence_files = evidence_files_df[
+                evidence_files_df["captured_at"] <= self.audit_at
+            ]
+
+            return {
+                "evidence_files": evidence_files,
+                "system_activity": system_activity,
+                "activity_pool": system_activity_df[
+                    system_activity_df["event_time"] <= self.audit_at
+                ],
+                "user_audit_log": user_audit_log,
+                "user_identities": user_identity,
+            }
 
     def _filter_system_activity(self, system_activity_df: pd.DataFrame) -> pd.DataFrame:
         """

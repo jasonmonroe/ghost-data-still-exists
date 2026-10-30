@@ -19,7 +19,7 @@ from src.constants import MAX_TOKENS
 
 @dataclass
 class ModelUsage:
-    response_id: any = None
+    response_id: str | None
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
