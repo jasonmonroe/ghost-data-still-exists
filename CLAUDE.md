@@ -127,8 +127,9 @@ when neither list matches) → `_filter_by_user` (current or historical email �
   15.6%, 0 phase-order violations (measured with all 28 LLM validity calls on the fallback).
 - Gemini calls currently fail: `402 prepayment credits depleted`. Real token counts / least-most prompts are
   unverified. Usage field names were checked against the SDK types, not a live response.
-- Output now goes to repo-root `output.csv`; evaluation then scores, prints usage + issues, and rewrites
-  `code/evaluation/usage_report.md` from `UsageTracker`. Warnings/errors go through `src/issues.py`
+- Output now goes to repo-root `output.csv`; evaluation then scores, prints usage + issues, and — on
+  production runs only (`USE_SAMPLE=False`) — rewrites `code/evaluation/usage_report.md` from `UsageTracker`.
+  Sample runs must never write that file: it documents the final 518-case run. Warnings/errors go through `src/issues.py`
   (`report_issue`) — use it instead of bare `print("⚠️ …")`.
 - `USE_SAMPLE` is parsed once in `constants.py` as a bool; never re-parse the env var.
 

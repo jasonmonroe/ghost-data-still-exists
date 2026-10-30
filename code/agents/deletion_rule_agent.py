@@ -51,7 +51,6 @@ class DeletionRuleAgent:
 
         self.rules = deletion_rules
 
-        self.rule_id = None
         self.data_category = None
         self.condition = None
         self.required_action = None

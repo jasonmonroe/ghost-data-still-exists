@@ -10,12 +10,16 @@ Computes accuracy metrics and extracts real token/prompt cost metrics
 from UsageTracker to update evaluation_report.md and usage_report.md.
 """
 
+# Python Libraries
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
 
+# Vendor Libraries
 import pandas as pd
 from sklearn.metrics import classification_report
+
+# Local Libraries
 from src.constants import (
     DATASET_PATH,
     INPUT_PRICE_PER_MTOK,

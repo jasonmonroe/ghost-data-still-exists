@@ -99,7 +99,7 @@ Key design points:
     ├── evaluation/
     │   ├── main.py                    scorer, usage report writer, warnings summary
     │   ├── evaluation_report.md       written by hand from the scorer output
-    │   └── usage_report.md            regenerated from the usage tracker on every run
+    │   └── usage_report.md            regenerated from the usage tracker on production runs only
     └── tests/{unit,feature}/          mirrors the source tree
 ```
 
@@ -143,7 +143,8 @@ With `USE_SAMPLE=False` this processes all 518 requests. The pipeline writes the
 1. scores it against `dataset/sample_output.csv` (sample mode) or prints the status distribution only
    (full mode, which has no labels);
 2. prints the token usage, including the **least and most expensive prompts** from the usage tracker;
-3. rewrites `code/evaluation/usage_report.md` from the tracker's real counts; and
+3. in full mode only (`USE_SAMPLE=False`), rewrites `code/evaluation/usage_report.md` from the tracker's
+   real counts (sample runs print usage to the console and leave the report untouched); and
 4. prints every warning and error collected during the run, grouped by message.
 
 Unclear requests are classified by the LLM. If it fails (outage, rate limit, no credits), the request is

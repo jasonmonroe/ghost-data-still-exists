@@ -158,6 +158,7 @@ source .venv/bin/activate
 USE_SAMPLE=True python code/main.py      # writes ./output.csv, then scores it, then prints usage and issues
 ```
 
-`usage_report.md` is regenerated from the usage tracker at the end of every run, so run the final
-`USE_SAMPLE=False` pass last. Optional `INPUT_PRICE_PER_MTOK` / `OUTPUT_PRICE_PER_MTOK` in `.env` turn on the
+`usage_report.md` is regenerated from the usage tracker only at the end of a production run
+(`USE_SAMPLE=False`); sample runs print usage to the console and leave the file untouched. The report
+therefore always reflects the most recent full 518-case run. Optional `INPUT_PRICE_PER_MTOK` / `OUTPUT_PRICE_PER_MTOK` in `.env` turn on the
 cost estimate. 
