@@ -118,10 +118,8 @@ class StepsAgent:
 
     def compile(self) -> str:
         """
-        Compiles all added steps, sorts them, enforces consecutive numbering,
-        and returns the final JSON string for steps_json.
-        Sort key: phase (FINDING, REMEDIATION, VERIFICATION), then operation
-        priority, then system_id, then resource_id.
+        Compiles all added steps in their exact insertion order, enforces
+        consecutive numbering, and returns the final JSON string for steps_json.
         Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
         """
         if not self._data:
@@ -142,6 +140,14 @@ class StepsAgent:
             step_item = item.copy()
             step_item["step_no"] = idx
             steps.append(step_item)
+
+        """
+        steps = []
+        for idx, item in enumerate(self._data, start=1):
+            step_item = item.copy()
+            step_item["step_no"] = idx
+            steps.append(step_item)
+        """
 
         return json.dumps(steps)
 

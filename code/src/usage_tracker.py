@@ -19,14 +19,14 @@ from src.constants import MAX_TOKENS
 
 @dataclass
 class ModelUsage:
-    response_id: str | None
+    response_id: str = ""
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
 
     least: dict = field(
         default_factory=lambda: {
-            "response_id": None,
+            "response_id": "",
             "tokens": MAX_TOKENS * 2,
             "prompt": "",
         }

@@ -113,7 +113,7 @@ class EvidenceAgent:
 
         return findings
 
-    def _get_resources(self, matched: list[dict], all_evidence: list[dict]) -> set[str]:
+    def _get_resources(self, matched: list[dict]) -> set[str]:
         """
         Pass filtered evidence in and get the resource data from system activities.
         Parse all evidence data into chunks and check if any chunk matches any

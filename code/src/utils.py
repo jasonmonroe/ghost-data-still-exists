@@ -37,42 +37,31 @@ def banner(title: str) -> None:
 
 
 def format_time(duration: float) -> str:
-    hrs = 0
-    mins = 0
-    secs = 0
-    msec = 0
+    """Seconds -> 'Xh Ym Zs N.NNNms', e.g. 3725.5 -> '1h 2m 5s 500.000ms'."""
+    hrs, remainder = divmod(duration, SECONDS_IN_HR)
+    mins, remainder = divmod(remainder, SECONDS_IN_MIN)
+    secs, fraction = divmod(remainder, 1)
 
-    if duration > SECONDS_IN_HR:
-        hrs = duration // SECONDS_IN_HR
-        duration = duration % SECONDS_IN_HR
-    if duration > SECONDS_IN_MIN:
-        mins = duration // SECONDS_IN_MIN
-        duration = duration % SECONDS_IN_MIN
+    msec = f"{fraction * SECONDS_TO_MSEC:.3f}"
 
-    duration_ms = duration * SECONDS_TO_MSEC
-    msec = f"{duration_ms:.3f}"
-
-    return f"{hrs}h {mins}m {secs}s {msec}ms"
+    return f"{int(hrs)}h {int(mins)}m {int(secs)}s {msec}ms"
 
 
-def get_progress_bar(idx: int, total: int) -> str:
+def get_progress_bar(done: int, total: int) -> str:
     """
-    Displays progress of claim analysis.
-
-    :param idx:
-    :param total:
-    :return:
+    Progress of the case audit.
+    :param done: number of cases finished so far (1-based: 1 after the first case)
+    :param total: total number of cases
+    :return: one ✅ per finished case, ☑️ for the rest, then 'done / total  pct%'
     """
     print()
 
     i_empty, i_full = "☑️ ", "✅️ "
-    completion_pct = ((idx + 1) / total) * 100
+    completion_pct = (done / total) * 100
 
-    graphic = ""
-    for i in range(total):
-        graphic += i_full if i <= idx else i_empty
+    graphic = "".join(i_full if i < done else i_empty for i in range(total))
 
-    return graphic + f"\t{idx} / {total}\t{completion_pct:.1f}%"
+    return graphic + f"\t{done} / {total}\t{completion_pct:.1f}%"
 
 
 def get_run_id() -> str:

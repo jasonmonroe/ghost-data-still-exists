@@ -36,6 +36,7 @@ from src.constants import (
 )
 from src.enums import DeletionStatus, StepOperations, StepStates
 from src.issues import WARNING, report_issue
+from src.utils import clean_str
 
 
 class CaseAuditorAgent:
@@ -94,7 +95,7 @@ class CaseAuditorAgent:
         """Check Validity: Did the user actually ask to delete their data, or
         is the request irrelevant (NOT_APPLICABLE)?"""
 
-        text = self.request_text.lower() if self.request_text else ""
+        text = clean_str(self.request_text).lower()
         if any(word in text for word in NON_DELETION_KEYWORDS):
             return False
 
@@ -177,28 +178,28 @@ class CaseAuditorAgent:
             # If it's still empty log a warning.
             report_issue(
                 WARNING,
-                f"⚠️ Case {self.case_id}: User {self.email} completely unknown.",
+                f"Case {self.case_id}: User {self.email} completely unknown.",
             )
             return {
                 "evidence_files": evidence_files_df,
                 "system_activity": system_activity_df,
                 "activity_pool": pd.DataFrame(),
                 "user_audit_log": user_audit_log_df,
-                "user_identities": user_identities_df,
+                "user_identities": None,  # no single user: nothing to audit
             }
 
         elif user_count > 1:
             # Scenario 3: Ambiguous results (multiple matching users returned)
             report_issue(
                 WARNING,
-                f"⚠️ Case {self.case_id}: Multiple users matching {self.email} returned.",
+                f"Case {self.case_id}: Multiple users matching {self.email} returned.",
             )
             return {
                 "evidence_files": evidence_files_df,
                 "system_activity": system_activity_df,
                 "activity_pool": pd.DataFrame(),
                 "user_audit_log": user_audit_log_df,
-                "user_identities": user_identities_df,
+                "user_identities": None,  # no single user: nothing to audit
             }
 
         else:
