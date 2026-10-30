@@ -18,13 +18,7 @@ class DeletionStatus(StrEnum):
     NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
-class ReportedStatus(StrEnum):
-    COMPLETE = "COMPLETE"
-    PARTIAL = "PARTIALLY_COMPLETE"
-    NOT_STARTED = "NOT_STARTED"
-
-
-class StepPhrases(StrEnum):
+class StepPhases(StrEnum):
     FINDING = "FINDING"
     REMEDIATION = "REMEDIATION"
     VERIFICATION = "VERIFICATION"
@@ -56,4 +50,6 @@ class StepStates(StrEnum):
     REDACTED = "REDACTED"
     ANONYMIZED = "ANONYMIZED"
     BLOCKED = "BLOCKED"
+
+    # ℹ️ `UNKNOWN` is not a part of state and is used as a fallback.
     UNKNOWN = "UNKNOWN"  # non-official

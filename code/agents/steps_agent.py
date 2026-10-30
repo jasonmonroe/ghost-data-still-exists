@@ -4,59 +4,13 @@
 +-----------------------------------------------------------------------------+
 |                                   STEPS AGENT                               |
 +-----------------------------------------------------------------------------+
+
 Ordered JSON array of findings, remediation actions, and verification checks
 Takes data such as phase, operation, state, meaning maps it with a matrix
 and outputs the correct value.
 
-| `steps_json` | Ordered JSON array of findings, remediation actions, and verification checks |
-
-The final file must contain exactly 518 data rows, sorted by `case_id`.
-
-Each object in `steps_json` must contain:
-
-```json
-{
-  "step_no": 1,
-  "phase": "FINDING",
-  "system_id": "account_service",
-  "resource_id": "account_005",
-  "operation": "REPORT_REMAINING_RECORD",
-  "state": "PRESENT",
-  "evidence_id": "evidence_01"
-}
-```
-
-`phase` must be `FINDING`, `REMEDIATION`, or `VERIFICATION`. Step numbers start at `1` and increase consecutively. Array order is significant.
-
-For `COMPLETE`, include only verification steps proving the current state. For `INCOMPLETE`, include findings, the complete remediation plan, and the checks that must pass afterward. For `NOT_APPLICABLE`, use an empty JSON array (`[]`) because no deletion or deletion verification is authorized.
-
-A non-deletion row therefore has this form:
-
-```csv
-case_000,NOT_APPLICABLE,[]
-```
-
-The grader parses `steps_json` as JSON. JSON object-key order and whitespace are ignored; array order is not.
-
-## Allowed Operations
-
-| Phase | Operation | State | Meaning |
-| --- | --- | --- | --- |
-| `FINDING` | `REPORT_REMAINING_RECORD` | `PRESENT` | A record that should have been deleted still exists. |
-| `FINDING` | `REPORT_EXPOSED_PII` | `PRESENT` | A record may remain, but it still contains identifiers that should have been redacted or anonymized. |
-| `FINDING` | `REPORT_ACTIVE_DATA_FLOW` | `ACTIVE` | An active process can copy or recreate the user's data. |
-| `FINDING` | `REPORT_RESTORE_RISK` | `ACTIVE` | A backup or restore path can bring deleted data back. |
-| `REMEDIATION` | `DISABLE_DATA_FLOW` | `DISABLED` | Stop the process that can copy or recreate the data. |
-| `REMEDIATION` | `BLOCK_RESTORE` | `BLOCKED` | Prevent the affected backup from restoring the user's data. |
-| `REMEDIATION` | `DELETE_RECORD` | `ABSENT` | Remove the entire record. |
-| `REMEDIATION` | `REDACT_RECORD` | `REDACTED` | Keep the record but remove the identifying fields required by policy. |
-| `REMEDIATION` | `ANONYMIZE_RECORD` | `ANONYMIZED` | Keep the record after irreversibly unlinking it from the user. |
-| `VERIFICATION` | `VERIFY_RECORD_ABSENT` | `ABSENT` | Confirm that a record no longer exists. |
-| `VERIFICATION` | `VERIFY_RECORD_PRESENT` | `PRESENT` | Confirm that a policy-required retained record still exists. |
-| `VERIFICATION` | `VERIFY_RECORD_REDACTED` | `REDACTED` | Confirm that required identifying fields have been removed. |
-| `VERIFICATION` | `VERIFY_RECORD_ANONYMIZED` | `ANONYMIZED` | Confirm that the record can no longer be linked to the user. |
-| `VERIFICATION` | `VERIFY_DATA_FLOW_DISABLED` | `DISABLED` | Confirm that the relevant data flow is inactive. |
-| `VERIFICATION` | `VERIFY_RESTORE_BLOCKED` | `BLOCKED` | Confirm that the affected data cannot be restored. |
+The grader parses `steps_json` as JSON. JSON object-key order and whitespace
+are ignored; array order is not.
 """
 
 import json
@@ -64,15 +18,13 @@ import json
 from agents.evidence_agent import ResourceFinding
 from src.constants import (
     DEFAULT_SORT_PRIORITY,
-    FINDING_STEP_PHASE_ORDER,
     OP_PRIORITY,
-    REMEDIATION_STEP_PHASE_ORDER,
-    STATE_MAPPING,
-    VERIFICATION_STEP_PHASE_ORDER,
+    STEP_AGENT_PHASE_ORDER,
+    VERIFY_OP_BY_STATE,
     VERIFY_OP_MAPPING,
     VERIFY_STATE_MAPPING,
 )
-from src.enums import StepOperations, StepPhrases, StepStates
+from src.enums import StepOperations, StepPhases, StepStates
 
 
 class StepsAgent:
@@ -83,14 +35,15 @@ class StepsAgent:
         self._verify_state = None
         self._verify_evidence = None
 
-    def set_verify_complete(self, finding: ResourceFinding):
-        self._verify_op = (
-            StepOperations.VERIFY_RECORD_ABSENT
-            if finding.state == StepStates.ABSENT
-            else StepOperations.VERIFY_RECORD_PRESENT
+    def set_verify_complete(
+        self, finding: ResourceFinding, with_evidence: bool = True
+    ) -> None:
+        """Verification proving the current, compliant state."""
+        self._verify_op = VERIFY_OP_BY_STATE.get(
+            finding.state, StepOperations.VERIFY_RECORD_PRESENT
         )
         self._verify_state = finding.state
-        self._verify_evidence = finding.evidence_id or ""
+        self._verify_evidence = (finding.evidence_id or "") if with_evidence else ""
 
     def set_verify_incomplete(self, required_action: str) -> None:
         self._verify_op = VERIFY_OP_MAPPING.get(
@@ -101,38 +54,15 @@ class StepsAgent:
         )
         self._verify_evidence = ""
 
-    def add_finding_phase(self, finding: ResourceFinding, required_action: str) -> None:
-        if (
-            required_action
-            in (StepOperations.REDACT_RECORD, StepOperations.ANONYMIZE_RECORD)
-            and finding.exposed_fields
-        ):
-            op = StepOperations.REPORT_EXPOSED_PII
-        else:
-            op = StepOperations.REPORT_REMAINING_RECORD
-
+    def add_finding_phase(
+        self, finding: ResourceFinding, operation: StepOperations
+    ) -> None:
+        """The caller decides the finding operation; this only records it."""
         self.add(
-            phase=StepPhrases.FINDING,
+            phase=StepPhases.FINDING,
             system_id=finding.system_id,
             resource_id=finding.resource_id,
-            operation=op,
-            state=finding.state,
-            evidence_id=finding.evidence_id,
-        )
-
-    # @depracated
-    def add_finding_phase2(self, finding: ResourceFinding) -> None:
-        op = (
-            StepOperations.REPORT_EXPOSED_PII
-            if finding.exposed_fields
-            else StepOperations.REPORT_REMAINING_RECORD
-        )
-
-        self.add(
-            phase=StepPhrases.FINDING,
-            system_id=finding.system_id,
-            resource_id=finding.resource_id,
-            operation=op,
+            operation=operation,
             state=finding.state,
             evidence_id=finding.evidence_id,
         )
@@ -142,10 +72,10 @@ class StepsAgent:
     ) -> None:
 
         # Map required action to its target state
-        remediation_state = STATE_MAPPING.get(required_action, StepStates.ABSENT)
+        remediation_state = VERIFY_STATE_MAPPING.get(required_action, StepStates.ABSENT)
 
         self.add(
-            StepPhrases.REMEDIATION,
+            StepPhases.REMEDIATION,
             finding.system_id,
             finding.resource_id,
             required_action,
@@ -155,7 +85,7 @@ class StepsAgent:
 
     def add_verification_phase(self, finding: ResourceFinding) -> None:
         self.add(
-            phase=StepPhrases.VERIFICATION,
+            phase=StepPhases.VERIFICATION,
             system_id=finding.system_id,
             resource_id=finding.resource_id,
             operation=self._verify_op,
@@ -188,22 +118,16 @@ class StepsAgent:
     def compile(self) -> str:
         """
         Compiles all added steps, enforces consecutive numbering starting and
-        retrus the final JSON string for steps_json.
+        returns the final JSON string for steps_json.
         Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
         """
         if not self._data:
             return json.dumps([])
 
-        phase_order = {
-            StepPhrases.FINDING: FINDING_STEP_PHASE_ORDER,
-            StepPhrases.REMEDIATION: REMEDIATION_STEP_PHASE_ORDER,
-            StepPhrases.VERIFICATION: VERIFICATION_STEP_PHASE_ORDER,
-        }
-
         sorted_data = sorted(
             self._data,
             key=lambda step: (
-                phase_order.get(step["phase"], DEFAULT_SORT_PRIORITY),
+                STEP_AGENT_PHASE_ORDER.get(step["phase"], DEFAULT_SORT_PRIORITY),
                 OP_PRIORITY.get(step["operation"], DEFAULT_SORT_PRIORITY),
                 step["system_id"],
                 step["resource_id"],
@@ -213,28 +137,6 @@ class StepsAgent:
         steps = []
         for idx, item in enumerate(sorted_data, start=1):
             step_item = item.copy()
-            step_item["step_no"] = idx
-            steps.append(step_item)
-
-        return json.dumps(steps)
-
-    # @depracated
-    def compile_old(self) -> str:
-        """
-        Compiles all added steps, enforces consecutive numbering starting and
-        retrus the final JSON string for steps_json.
-        Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
-        """
-
-        if not self._data:
-            return json.dumps([])
-
-        steps = []
-        for idx, item in enumerate(self._data, start=1):
-            # Create a copy or update the dictionary directly to include step_no
-            step_item = item.copy()
-
-            # Good practice to avoid mutating self._data directly
             step_item["step_no"] = idx
             steps.append(step_item)
 

@@ -2,7 +2,7 @@
 
 """
 +-----------------------------------------------------------------------------+
-|                            GHOST DATA STILL EXISTS                          |
+|                         👻 GHOST DATA STILL EXISTS 👻                        |
 +-----------------------------------------------------------------------------+
 
 
@@ -64,7 +64,7 @@ steps (steps_json) detailing what findings were made, what remediation steps are
 
 __author__ = "Jason Monroe (jason@jasonmonroe.com)"
 __copyright__ = "Copyright © 2011-2026 Monroe Labs Co."
-__date__ = "2026-10-25"
+__date__ = "2026-10-25 - 2026-10-29"
 __version__ = "1.1.0"
 
 
@@ -89,12 +89,11 @@ def main():
     # Calling main pipeline from code evaluation
     run_evaluation_pipeline()
 
-    # Get Dataset
+    # Load data handler and pass dataset to the pipeline
     data_handle = DataHandler()
-    dataset = data_handle.__dict__
 
     # Running pipelines
-    output_csv = run_case_audit_pipeline(dataset)
+    output_csv = run_case_audit_pipeline(data_handle.__dict__)
 
     if len(output_csv) == 0:
         print("⚠️ Warning: No output data returned.")
@@ -109,7 +108,7 @@ if __name__ == "__main__":
     run_id = get_run_id()
     print(f"Run ID: {run_id}")
 
-    banner(APP_NAME.replace("_", " ").upper())
+    banner(APP_NAME.upper())
 
     # Start Time
     start_time = start_timer()

@@ -10,10 +10,9 @@ def run_case_audit_pipeline(dataset: dict):
     print("\n--- 🏃 Running Case Audit Pipeline 🏃 ---")
     output_csv = []
 
-    auditor = CaseAuditorAgent(dataset)
-
     cases_df = dataset.get("deletion_requests")
     row_count = len(cases_df)
+    auditor = CaseAuditorAgent(dataset)
 
     # Analyze each case for deletion requests
     """
@@ -27,14 +26,8 @@ def run_case_audit_pipeline(dataset: dict):
         "request_text": "Hi, I haven’t used this account in years and would like it closed. Please remove the profile and the personal details attached to it."
         }
     """
+
     for index, case_df in cases_df.iterrows():
-        output = []
-        # if index != 0:
-        #    import sys
-
-        #    sys.exit(0)
-
-        # print(case_df.to_dict())
         output = auditor.audit_by_case(case_df)
         output_csv.append(output)
 

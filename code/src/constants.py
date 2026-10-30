@@ -7,13 +7,13 @@ import os
 import re
 from pathlib import Path
 
-from src.enums import StepOperations, StepStates
+from src.enums import StepOperations, StepPhases, StepStates
 
 # ============================================================================
-# 1. ENVIRONMENT & APP SETTINGS
+# ENVIRONMENT & APP SETTINGS
 # ============================================================================
 
-APP_NAME = os.getenv("APP_NAME")
+APP_NAME = os.getenv("APP_NAME", "Ghost Data Still Exists")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = os.getenv("GEMINI_API_ENDPOINT")
@@ -21,11 +21,11 @@ USE_SAMPLE = os.getenv("USE_SAMPLE", "True")
 
 
 # ============================================================================
-# 2. FILE PATHS & DIRECTORIES
+# FILE PATHS & DIRECTORIES
 # ============================================================================
 
 DATASET_PATH = Path("./dataset/")
-EVIDENCE_PATH = DATASET_PATH / "evidence"
+OUTPUT_FILE = DATASET_PATH / "output.csv"
 
 DATASET_FILES = [
     "deletion_requests",
@@ -41,7 +41,7 @@ DATASET_FILES = [
 
 
 # ============================================================================
-# 3. NUMERIC LIMITS, TIMEVALS & DEFAULTS
+# NUMERIC LIMITS, TIMEVALS & DEFAULTS
 # ============================================================================
 
 BANNER_PADDING = 4
@@ -58,57 +58,40 @@ INTERNAL_STATUS_ERR_CODE = 500
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 PHONE_LEN = 7
 
-DEFAULT_FIELD_NAME = "identifier"
+OUTPUT_COLUMNS = ["case_id", "deletion_status", "steps_json"]
 DEFAULT_RULE_CATEGORY = "general_record"
-DEFAULT_REQ_ACTION = "DELETE_RECORD"
 
 # Fallback sort priority for unknown or unmapped phases/operations
 DEFAULT_SORT_PRIORITY = 99
 
-FINDING_STEP_PHASE_ORDER = 1
-REMEDIATION_STEP_PHASE_ORDER = 2
-VERIFICATION_STEP_PHASE_ORDER = 3
-
+PROCESS_FLAGS = {
+    "backup": ("restore_allowed", 4, StepStates.ACTIVE, StepStates.BLOCKED),
+    "data_flow": ("enabled", 4, StepStates.ACTIVE, StepStates.DISABLED),
+}
+PROCESS_CATEGORIES = {"BACKUP_ARCHIVE", "DATA_FLOW"}
 
 # ============================================================================
-# 4. REGULAR EXPRESSION PATTERNS
+# REGULAR EXPRESSION PATTERNS
 # ============================================================================
-
+ABSENT_HINT_RE = re.compile(
+    r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE
+)
+LINK_RE = re.compile(
+    r"linked (\S+) .*? to ([\w.-]+@[\w.-]+) and (user_\d+)", re.IGNORECASE
+)
+PROCESS_TABLE_STATE_RE = re.compile(
+    r"\|\s*(ACTIVE|BLOCKED|DISABLED)\s*\|", re.IGNORECASE
+)
 RESOURCE_ID_RE = re.compile(
     r"\b(?:account|search|analytics|support|cache|export|email_delivery|audit_record"
     r"|data_flow|backup|tombstone|legal_hold|marketing)_\d+\b"
 )
+SQL_VALUE_RE = re.compile(r"'((?:[^']|'')*)'|(NULL)|(-?\d+(?:\.\d+)?)")
 TRACE_ID_RE = re.compile(r"\b(tr-[\w-]+)\b")
-PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
-LINK_RE = re.compile(r"linked (\S+) .*? to (\S+@\S+?) and (user_\d+)", re.IGNORECASE)
-ABSENT_HINT_RE = re.compile(
-    r'rows="?0"?(?!\d)|http_status="?404|NOT_FOUND', re.IGNORECASE
-)
-
 
 # ============================================================================
-# 5. MAPPINGS & DICTIONARIES
+# MAPPINGS & DICTIONARIES
 # ============================================================================
-
-"""
-@TODO - old version
-CATEGORY_BY_PREFIX = {
-    "account": "USER_PROFILE",
-    "analytics": "ANALYTICS_RECORD",
-    "audit_record": "SECURITY_AUDIT_LOG",
-    "backup": "BACKUP_RESTORE_RISK",  # @TODO was BACKUP_ARCHIVE
-    "cache": "CACHE_RECORD",  # @TODO was CACHE_ENTRY
-    "data_flow": "ACTIVE_DATA_FLOW", # @TODO was DATA_FLOW
-    "email_delivery": "EMAIL_DELIVERY_LOG",
-    "export": "USER_EXPORT",
-    "legal_hold": "LEGAL_HOLD",
-    "marketing": "MARKETING_PROFILE",  # @TODO - was MARKETING_LIST
-    "search": "SEARCH_INDEX",  # @TODO was SEARCH_INDEX_ENTRY
-    "support": "SUPPORT_TICKET",
-    "tombstone": "ACCOUNT_TOMBSTONE",
-}
-"""
-
 CATEGORY_BY_PREFIX = {
     "account": "USER_PROFILE",
     "analytics": "ANALYTICS_PROFILE",
@@ -125,24 +108,11 @@ CATEGORY_BY_PREFIX = {
     "tombstone": "ACCOUNT_TOMBSTONE",
 }
 
-"""
-
-ACCOUNT_TOMBSTONE
-ANALYTICS_PROFILE
-BACKUP_ARCHIVE
-CACHE_ENTRY
-EMAIL_DELIVERY_LOG
-LEGAL_HOLD_RECORD
-MARKETING_PROFILE
-PRODUCT_TELEMETRY
-SEARCH_INDEX_ENTRY
-SECONDARY_IDENTIFIER
-SECURITY_AUDIT_LOG
-SUPPORT_ATTACHMENT
-SUPPORT_MESSAGE
-USER_EXPORT
-USER_PROFILE
-"""
+STEP_AGENT_PHASE_ORDER = {
+    StepPhases.FINDING: 1,
+    StepPhases.REMEDIATION: 2,
+    StepPhases.VERIFICATION: 3,
+}
 
 ACTION_MAPPING = {
     "DELETE": StepOperations.DELETE_RECORD,
@@ -159,7 +129,7 @@ VERIFY_OP_MAPPING = {
     StepOperations.BLOCK_RESTORE: StepOperations.VERIFY_RESTORE_BLOCKED,
 }
 
-STATE_MAPPING = {
+VERIFY_STATE_MAPPING = {
     StepOperations.DELETE_RECORD: StepStates.ABSENT,
     StepOperations.REDACT_RECORD: StepStates.REDACTED,
     StepOperations.ANONYMIZE_RECORD: StepStates.ANONYMIZED,
@@ -167,12 +137,20 @@ STATE_MAPPING = {
     StepOperations.BLOCK_RESTORE: StepStates.BLOCKED,
 }
 
-VERIFY_STATE_MAPPING = {
-    StepOperations.DELETE_RECORD: StepStates.ABSENT,
-    StepOperations.REDACT_RECORD: StepStates.REDACTED,
-    StepOperations.ANONYMIZE_RECORD: StepStates.ANONYMIZED,
-    StepOperations.DISABLE_DATA_FLOW: StepStates.DISABLED,
-    StepOperations.BLOCK_RESTORE: StepStates.BLOCKED,
+VERIFY_OP_BY_STATE = {
+    StepStates.ABSENT: StepOperations.VERIFY_RECORD_ABSENT,
+    StepStates.PRESENT: StepOperations.VERIFY_RECORD_PRESENT,
+    StepStates.REDACTED: StepOperations.VERIFY_RECORD_REDACTED,
+    StepStates.ANONYMIZED: StepOperations.VERIFY_RECORD_ANONYMIZED,
+    StepStates.BLOCKED: StepOperations.VERIFY_RESTORE_BLOCKED,
+    StepStates.DISABLED: StepOperations.VERIFY_DATA_FLOW_DISABLED,
+}
+FINDING_OP_BY_ACTION = {
+    StepOperations.DELETE_RECORD: StepOperations.REPORT_REMAINING_RECORD,
+    StepOperations.REDACT_RECORD: StepOperations.REPORT_EXPOSED_PII,
+    StepOperations.ANONYMIZE_RECORD: StepOperations.REPORT_EXPOSED_PII,
+    StepOperations.BLOCK_RESTORE: StepOperations.REPORT_RESTORE_RISK,
+    StepOperations.DISABLE_DATA_FLOW: StepOperations.REPORT_ACTIVE_DATA_FLOW,
 }
 
 OP_PRIORITY = {
@@ -196,25 +174,6 @@ OP_PRIORITY = {
     StepOperations.VERIFY_RESTORE_BLOCKED: 6,
 }
 
-"""
-# In src/constants.py
-CATEGORY_BY_PREFIX = {
-    "analytics": "ANALYTICS_PROFILE",  # Was ANALYTICS_RECORD
-    "backup": "BACKUP_ARCHIVE",  # Was BACKUP_RESTORE_RISK
-    "cache": "CACHE_ENTRY",  # Was CACHE_RECORD
-    "marketing": "MARKETING_PROFILE",  # Was MARKETING_LIST
-    "search": "SEARCH_INDEX_ENTRY",  # Was SEARCH_INDEX
-    "support": "SUPPORT_MESSAGE",  # Was SUPPORT_TICKET
-    "legal_hold": "LEGAL_HOLD_RECORD",  # Added missing mapping
-    "user": "USER_PROFILE",
-    "audit_record": "SECURITY_AUDIT_LOG",  # Or matching your rules file
-    "data_flow": "DATA_FLOW",
-    "export": "EXPORT_RECORD",
-    "tombstone": "IDENTITY_TOMBSTONE",
-}
-"""
-
-
 TARGET_SYSTEMS = {
     "cache": "cache_service",
     "email_delivery": "email_delivery_service",
@@ -224,7 +183,7 @@ TARGET_SYSTEMS = {
 
 
 # ============================================================================
-# 6. DOMAIN-SPECIFIC SETS & KEYWORD TUPLES
+# DOMAIN-SPECIFIC SETS & KEYWORD TUPLES
 # ============================================================================
 
 PERSONAL_INFO_FIELDS = {
@@ -273,12 +232,11 @@ NON_DELETION_KEYWORDS = (
 
 
 # ============================================================================
-# 7. LLM PROMPTS & TEMPLATES
+# LLM PROMPTS & TEMPLATES
 # ============================================================================
 
-SYSTEM_INSTR_PROMPT = """
-You are a consumer behavioral expert and data privacy compliance auditor. 
-Your task is to analyze customer messages to determine if they explicitly 
+SYSTEM_INSTR_PROMPT = """You are a consumer behavioral expert and data privacy
+compliance auditor. Your task is to analyze customer messages to determine if they explicitly 
 authorize deleting their account, profile, or personal data.
 
 Classification Rules:
@@ -295,12 +253,10 @@ its intent.
 
 Output Requirement:
 Return ONLY the exact boolean value True or False. Do not include markdown 
-fences, prose, or explanation.
-""".strip()
+fences, prose, or explanation.""".strip()
 
-VALIDITY_PROMPT = """
-As a user behavioral expert, analyze this user request to determine if 
-they're explicitly requesting to delete, erase, close, or remove their 
+VALIDITY_PROMPT = """As a user behavioral expert, analyze this user request to 
+determine if they're explicitly requesting to delete, erase, close, or remove their 
 account, profile, or personal data. 
 
 Note: 
@@ -310,8 +266,7 @@ its intent.
 emails, or unsubscribing from marketing emails are NOT deletion requests and
  must return False.
 
-Return ONLY the boolean value True or False.
-
+Return ONLY the boolean value `True` or `False`.
+`
 CUSTOMER REQUEST:
-"{request_text}"
-""".strip()
+{request_text}\n""".strip()

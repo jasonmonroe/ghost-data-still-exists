@@ -39,12 +39,14 @@ from pypdf import PdfReader
 from src.constants import (
     ABSENT_HINT_RE,
     DATASET_PATH,
-    DEFAULT_FIELD_NAME,
     LINK_RE,
     PERSONAL_INFO_FIELDS,
     PHONE_LEN,
     PHONE_RE,
+    PROCESS_FLAGS,
+    PROCESS_TABLE_STATE_RE,
     RESOURCE_ID_RE,
+    SQL_VALUE_RE,
     TARGET_SYSTEMS,
     TRACE_ID_RE,
 )
@@ -60,7 +62,6 @@ class ResourceFinding:
     state: str  # PRESENT | ABSENT | UNKNOWN (REDACTED/ACTIVE/... come later)
     evidence_id: str | None
     exposed_fields: frozenset = field(default_factory=frozenset)
-    attributes: dict = field(default_factory=dict)
     timeline: tuple = ()  # activity_ids, oldest -> newest
 
 
@@ -128,7 +129,7 @@ class EvidenceAgent:
 
         # Resources in the SAME line / row / record / trace as a user identifier
         for f in matched:
-            for chunk in self._chunks(f["content"]):
+            for chunk in self._get_content_chunks(f["content"]):
                 if self._mentions_user(chunk):
                     resources |= set(RESOURCE_ID_RE.findall(chunk))
 
@@ -168,34 +169,92 @@ class EvidenceAgent:
         or NOT_FOUND hints), or if a full system snapshot lists other items of
         that type but omits this specific resource ID, it definitively proves
         ABSENT.
+
+        Adding category or keyword awareness in state checking.  Checks if the
+        resource prefix or content indicates a running process or unblocked
+        backup path before returning PRESENT.
         """
 
-        candidates = sorted(
-            (f for f in evidence if f["captured_at"] >= after),
-            key=lambda f: (f["captured_at"], f["file_id"]),
+        sorted_evidence_files = sorted(
+            (
+                sorted_ev_file
+                for sorted_ev_file in evidence
+                if sorted_ev_file["captured_at"] >= after
+            ),
+            key=lambda sorted_ev_file: (
+                sorted_ev_file["captured_at"],
+                sorted_ev_file["file_id"],
+            ),
             reverse=True,
         )
         rid_re = re.compile(rf"\b{re.escape(resource_id)}\b")
         same_type_re = re.compile(rf"\b{re.escape(prefix_of(resource_id))}_\d+\b")
 
-        for f in candidates:
-            chunks = self._chunks(f["content"])
-            hits = [c for c in chunks if rid_re.search(c)]
+        for sorted_ev_file in sorted_evidence_files:
+            chunks = self._get_content_chunks(sorted_ev_file["content"])
+            hits = [chunk for chunk in chunks if rid_re.search(chunk)]
+
             if hits:
-                # A lookup that returned 0 rows / 404 / NOT_FOUND proves absence, not presence
+                # If lookup returned 0 rows / 404 / NOT_FOUND -> ABSENT
                 if all(ABSENT_HINT_RE.search(c) for c in hits):
-                    return StepStates.ABSENT, f["file_id"]
-                return StepStates.PRESENT, f["file_id"]
+                    return StepStates.ABSENT, sorted_ev_file["file_id"]
+
+                # Backups / data flows: state comes from their own flag field
+                process_state = self._process_state(resource_id, hits)
+                if process_state is not None:
+                    return process_state, sorted_ev_file["file_id"]
+
+                return StepStates.PRESENT, sorted_ev_file["file_id"]
+
             # Snapshot lists other records of this type but not this one -> absent
-            if self._is_snapshot(f) and any(same_type_re.search(c) for c in chunks):
-                return StepStates.ABSENT, f["file_id"]
+            if self._is_snapshot(sorted_ev_file) and any(
+                same_type_re.search(c) for c in chunks
+            ):
+                return StepStates.ABSENT, sorted_ev_file["file_id"]
 
         return StepStates.UNKNOWN, None
 
     @staticmethod
+    def _process_state(resource_id: str, hits: list[str]) -> StepStates | None:
+        """ACTIVE / BLOCKED / DISABLED for process resources; None for ordinary records."""
+        flag = PROCESS_FLAGS.get(prefix_of(resource_id))
+        if flag is None:
+            return None
+
+        field_name, sql_col, if_true, if_false = flag
+        kv_re = re.compile(
+            rf'{field_name}"?\s*[:=]\s*"?(true|false|1|0)\b', re.IGNORECASE
+        )
+        for chunk in hits:
+            # Handover tables state it outright
+            m = PROCESS_TABLE_STATE_RE.search(chunk)
+            if m:
+                return StepStates(m.group(1).upper())
+
+            # Restore-candidate logs: eligible=true deletion_block=false -> restorable
+            if prefix_of(resource_id) == "backup" and "deletion_block=" in chunk:
+                return if_false if "deletion_block=true" in chunk.lower() else if_true
+
+            # JSON ("enabled": true) and logs (enabled=true)
+            m = kv_re.search(chunk)
+            if m:
+                return if_true if m.group(1).lower() in ("true", "1") else if_false
+
+            # SQL rows: positional column in INSERT ... VALUES (...)
+            for line in chunk.splitlines():
+                if "INSERT INTO" in line and resource_id in line:
+                    values = [
+                        a or b or c
+                        for a, b, c in SQL_VALUE_RE.findall(line.split("VALUES", 1)[1])
+                    ]
+                    if len(values) > sql_col:
+                        return if_true if values[sql_col] == "1" else if_false
+        return None
+
+    @staticmethod
     def _is_snapshot(f: dict) -> bool:
-        """Only full listings (SQL tables, JSON record sets) can prove absence by omission."""
-        return f["file_path"].suffix.lower() in {".sql", ".json"}
+        """Only full SQL table dumps can prove absence by omission."""
+        return f["file_path"].suffix.lower() == ".sql"
 
     def _build_finding(
         self, resource_id: str, evidence: list[dict], rules_agent
@@ -219,7 +278,6 @@ class EvidenceAgent:
             state=str(state.value),
             evidence_id=evidence_id,
             exposed_fields=exposed,
-            attributes={},
             timeline=tuple(timeline["activity_id"]),
         )
 
@@ -238,7 +296,7 @@ class EvidenceAgent:
         if not target or target["file_path"].suffix.lower() not in {".json", ".sql"}:
             return exposed
 
-        for chunk in self._chunks(target["content"]):
+        for chunk in self._get_content_chunks(target["content"]):
             if resource_id in chunk:
                 self._inspect_chunk_for_personal_info(chunk, exposed)
                 break
@@ -256,153 +314,6 @@ class EvidenceAgent:
                         exposed.add(field)
         except (json.JSONDecodeError, TypeError):
             print("🚨 Error: Data not decoded.")
-
-    # @depracated
-    def _get_exposed3(
-        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
-    ) -> set[str]:
-        """
-        Inspects the structured proof record to find exact PII field names
-        that are still populated (not null or empty).
-        """
-        exposed: set[str] = set()
-        if state != StepStates.PRESENT or not evidence_id:
-            return exposed
-
-        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
-        if not target or target["file_path"].suffix.lower() not in {".json", ".sql"}:
-            return exposed
-
-        for chunk in self._chunks(target["content"]):
-            if resource_id in chunk:
-                self._inspect_chunk_for_personal_info(chunk, exposed)
-                break
-
-        return exposed
-
-    @staticmethod
-    def _inspect_chunk_for_personal_info2(chunk, exposed: set[str]) -> None:
-        """Helper to parse a chunk and collect exposed PII fields safely."""
-        try:
-            chunk_data = json.loads(chunk) if isinstance(chunk, str) else chunk
-            if isinstance(chunk_data, dict):
-                for field in PERSONAL_INFO_FIELDS:
-                    value = chunk_data.get(field)
-                    if value not in (None, "", "null"):
-                        exposed.add(field)
-        except (json.JSONDecodeError, TypeError) as e:
-            # Cleanly handle non-JSON text chunks without catching blind Exception
-            print(f"🚨 Error: {e}")
-
-    # @depracated
-    def _get_exposed_works(
-        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
-    ) -> set[str]:
-        exposed: set[str] = set()
-        if state != StepStates.PRESENT or not evidence_id:
-            return exposed
-
-        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
-        if not target:
-            return exposed
-
-        # Only inspect structured JSON/SQL chunks for PII fields
-        if target["file_path"].suffix.lower() not in {".json", ".sql"}:
-            return exposed
-
-        for chunk in self._chunks(target["content"]):
-            if resource_id in chunk:
-                try:
-                    record = json.loads(chunk) if isinstance(chunk, str) else chunk
-                    if isinstance(record, dict):
-                        for field in PII_FIELDS:
-                            value = record.get(field)
-                            if value not in (None, "", "null"):
-                                exposed.add(field)
-                        break
-                except Exception:
-                    continue
-
-        return exposed
-
-    # @depracted
-    def _get_exposed_2(
-        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
-    ) -> set[str]:
-        """
-        Inspects the structured proof record to find exact PII field names
-        that are still populated (not null or empty).
-
-        Which kinds of identifier ("identifier", "phone") the proof chunk still
-        shows.
-
-        Blacklist certain information (PII) based on indentified field names from
-        the user. Some recoreds aren't deleted.  Policy says keep the record,
-        but black out the personal details.
-        """
-        exposed: set[str] = set()
-
-        if state != StepStates.PRESENT or not evidence_id:
-            return exposed
-
-        # Directly pluck the matching evidence file
-        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
-        if not target:
-            return exposed
-
-        # Inspect chunks (or parse JSON/SQL record dictionaries directly)
-        for chunk in self._chunks(target["content"]):
-            if resource_id in chunk:
-                try:
-                    # If chunk is a JSON string of a record, load it as a dict
-                    record = json.loads(chunk) if isinstance(chunk, str) else chunk
-                    if isinstance(record, dict):
-                        # Check which PII fields are still present and not empty/null
-                        for field in PII_FIELDS:
-                            value = record.get(field)
-                            if value not in (None, "", "null"):
-                                exposed.add(field)
-                        break
-                except Exception:
-                    # Fallback if chunk isn't valid JSON
-                    print("⚠️ Warning: chunk is not valid JSON.")
-                    continue
-
-        return exposed
-
-    # @depracated
-    def _get_exposed_old(
-        self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
-    ) -> set[str]:
-
-        exposed: set[str] = set()
-        if state != StepStates.PRESENT or not evidence_id:
-            return exposed
-
-        # 1. Directly pluck the matching evidence file
-        target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
-        if not target:
-            return exposed
-
-        text_terms, phone_terms = self._terms
-
-        # 2. First chunk of that file naming the resource decides what is exposed
-        for chunk in self._chunks(target["content"]):
-            if resource_id in chunk:
-                chunk_lower = chunk.lower()
-
-                # Check for specific text terms (emails, hashes, user identifiers)
-                for term in text_terms:
-                    if term and self._term_in_text(term, chunk_lower):
-                        # Optional: refinement: if it's an email format
-                        exposed_field = "email" if "@" in term else DEFAULT_FIELD_NAME
-                        exposed.add(exposed_field)
-
-                if phone_terms & self._phones_in(chunk):
-                    exposed.add("phone")
-                break
-
-        return exposed
 
     def _get_search_terms(self) -> tuple[set[str], set[str]]:
         """(text terms, phone digit strings) for this user: current + historical."""
@@ -470,10 +381,12 @@ class EvidenceAgent:
         return [
             f
             for f in evidence_list
-            if any(self._mentions_user(c) for c in self._chunks(f["content"]))
+            if any(
+                self._mentions_user(c) for c in self._get_content_chunks(f["content"])
+            )
         ]
 
-    def _chunks(self, content) -> list[str]:
+    def _get_content_chunks(self, content) -> list[str]:
         """
         Split content into units where co-occurrence means 'same record'.
         Different files store data differently (SQL tables vs. JSON trees vs.
@@ -506,7 +419,7 @@ class EvidenceAgent:
                 json.dumps(content, default=str)
             ]
 
-        return self._text_chunks(str(content))
+        return self._get_text_chunks(str(content))
 
     def _json_records(self, node):
         """Yield every dict that carries a resource_id (records nested at any depth)."""
@@ -520,7 +433,7 @@ class EvidenceAgent:
                 yield from self._json_records(item)
 
     @staticmethod
-    def _text_chunks(text: str) -> list[str]:
+    def _get_text_chunks(text: str) -> list[str]:
         """Lines; log lines sharing a trace_id are merged into one chunk."""
         traces: dict[str, list[str]] = defaultdict(list)
         singles: list[str] = []
@@ -647,24 +560,3 @@ class EvidenceAgent:
             }
         finally:
             conn.close()
-
-    def request(self):
-        # Ask the model what the resource findings should be based on data collected.
-        """
-        Example: case_001: COMPLETE
-        [
-            {"step_no": 1, "phase": "VERIFICATION", "system_id": "account_service", "resource_id": "account_001",
-            "operation": "VERIFY_RECORD_ABSENT", "state": "ABSENT", "evidence_id": "evidence_54"}
-        ]
-
-        Example: case_002: INCOMPLETE
-        [
-          {"step_no": 1, "phase": "FINDING",      "system_id": "account_service", "resource_id": "account_005",
-           "operation": "REPORT_REMAINING_RECORD", "state": "PRESENT", "evidence_id": "evidence_54"},
-          {"step_no": 2, "phase": "REMEDIATION",  "system_id": "account_service", "resource_id": "account_005",
-           "operation": "DELETE_RECORD",           "state": "ABSENT",  "evidence_id": ""},
-          {"step_no": 3, "phase": "VERIFICATION", "system_id": "account_service", "resource_id": "account_005",
-           "operation": "VERIFY_RECORD_ABSENT",    "state": "ABSENT",  "evidence_id": ""}
-        ]
-
-        """

@@ -33,10 +33,13 @@ remediation → verification). Full contract: `problem_statement.md`.
 ```bash
 source .venv/bin/activate            # Python 3.14
 python code/main.py                  # full pipeline (USE_SAMPLE=True → 32 sample cases)
-pytest -q                            # all tests
-pytest code/tests/unit -q            # fast, run on every save
-pytest -m "not slow"                 # skip OCR / full-pipeline tests
+pytest -q                            # all tests (currently stubs, see status)
 ```
+
+Config comes from `.env` (copy `.env.example`): `GEMINI_API_KEY`, `GEMINI_MODEL_NAME`,
+`GEMINI_API_ENDPOINT`, `USE_SAMPLE` (`True` → `sample_deletion_requests.csv`), `APP_NAME`, `LOG_LEVEL`.
+Run from the repo root (dataset path is `./dataset/`). `main.py` calls `load_dotenv()` before importing
+the app, so constants see the env vars.
 
 Imports are rooted at `code/` (e.g. `from agents.evidence_agent import EvidenceAgent`,
 `from src.constants import DATASET_PATH`). **Never** `from code.…` — `code` is a stdlib module and
@@ -46,16 +49,24 @@ shadows the folder.
 
 ```
 code/
-  main.py                          entry point
-  pipelines/run_case_audit_pipeline.py   loops cases → auditor → output rows
-  agents/case_auditor_agent.py     per case: validity → identity → evidence → rules → steps
-  agents/evidence_agent.py         per case: user's resources + state + proof (ResourceFinding)
-  agents/deletion_rule_agent.py    TODO: findings × deletion_rules → required action
-  agents/steps_agent.py            TODO: actions → ordered steps_json
-  src/data_handler.py              loads CSVs + evidence paths
-  src/constants.py, src/enums.py   config, allowed statuses/operations/states
-  tests/unit/…, tests/feature/…    mirror the source tree; files named test_<module>.py
+  main.py                                entry: evaluation stub → audit pipeline → DataHandler.save
+  pipelines/run_case_audit_pipeline.py   loops cases → CaseAuditorAgent.audit_by_case → output rows
+  agents/case_auditor_agent.py           per case: validity → identity → evidence → status → steps
+  agents/evidence_agent.py               per case: user's resources + state + proof (ResourceFinding)
+  agents/deletion_rule_agent.py          category lookup + rule action + evaluate(finding) → COMPLETE/INCOMPLETE
+  agents/steps_agent.py                  new instance per case; collects steps, compile() sorts + numbers
+  models/llm_model.py                    Gemini client (Interactions API), retries, usage recording
+  src/data_handler.py                    loads CSVs, USE_SAMPLE swap, saves output
+  src/constants.py, src/enums.py         config, regexes, category/op/state mappings, prompts
+  src/usage_tracker.py, src/utils.py     token usage per model (for usage_report), helpers
+  evaluation/main.py                     STUB — scorer / report generation goes here
+  tests/unit/…, tests/feature/…          mirror the source tree; files named test_<module>.py (stubs)
 ```
+
+Per-case flow (`CaseAuditorAgent.audit_by_case`): `_check_validity` (keyword lists in constants, LLM only
+when neither list matches) → `_filter_by_user` (current or historical email → one user) →
+`EvidenceAgent.search` → `DeletionRuleAgent.evaluate` per finding → `_finalize` builds steps via
+`StepsAgent` → `[case_id, status, steps]`.
 
 ## Core design decisions (keep these)
 
@@ -76,7 +87,23 @@ code/
    step generation and ordering. LLM only for: request-intent classification (multilingual),
    extracting facts from images/PDFs, and ambiguous rule conditions. Cache every LLM call.
 7. **Parse each evidence file once** (cache by path); filter parsed records per case.
-8. `ResourceFinding` (frozen dataclass) is the contract between EvidenceAgent and DeletionRuleAgent.
+8. `ResourceFinding` (frozen dataclass: `system_id`, `resource_id`, `category`, `state`, `evidence_id`,
+   `exposed_fields: frozenset`, `timeline`) is the contract between EvidenceAgent and DeletionRuleAgent.
+   Findings with `UNKNOWN` state are dropped in `EvidenceAgent.search`.
+9. **Category mapping is single-sourced.** `CATEGORY_BY_PREFIX` (one dict, in `constants.py`) must use
+   category names that exist in `deletion_rules.csv`. `DeletionRuleAgent.__init__` raises at startup if a
+   mapped category is missing from the rules file (except `PROCESS_CATEGORIES`: `DATA_FLOW`,
+   `BACKUP_ARCHIVE`). An unmapped category silently becomes COMPLETE, so never weaken that check.
+10. **Processes are not records.** `DATA_FLOW` has no CSV rule → `DISABLE_DATA_FLOW`; `BACKUP_ARCHIVE`
+    → `BLOCK_RESTORE` (its CSV RETAIN covers the archive, not its restore path). State comes from the
+    evidence (`PROCESS_FLAGS`: `enabled`, `restore_allowed`; ACTIVE vs DISABLED/BLOCKED).
+11. **Finding op follows the rule action** (`FINDING_OP_BY_ACTION`): DELETE → `REPORT_REMAINING_RECORD`,
+    REDACT/ANONYMIZE → `REPORT_EXPOSED_PII`, BLOCK_RESTORE → `REPORT_RESTORE_RISK`,
+    DISABLE_DATA_FLOW → `REPORT_ACTIVE_DATA_FLOW`. `exposed_fields` (from `PERSONAL_INFO_FIELDS`) decides
+    whether a REDACT/ANONYMIZE record is a violation.
+12. **Status rule:** a case is INCOMPLETE if any finding violates its rule; no findings → COMPLETE;
+    invalid/non-deletion request → NOT_APPLICABLE with `[]`. In an INCOMPLETE case every verification
+    step is future work (empty `evidence_id`); in a COMPLETE case verification cites the proof file.
 
 ## Hard rules
 
@@ -84,51 +111,53 @@ code/
   (evaluation report). Reason from inputs.
 - No hardcoded labels, case-specific shortcuts, or resource-number patterns (e.g. `account_001 ↔ user_01`).
 - Deterministic output: sorted rows, stable step ordering, `json.dumps(..., sort_keys=True)`.
+  Final file goes to repo-root `output.csv` (AGENTS.md §6.3).
 - Step order: FINDING → REMEDIATION → VERIFICATION; within a phase by operation order in
   `problem_statement.md`, then `system_id`, then `resource_id`; `step_no` 1..n.
-- Secrets only from env vars / `.env` (`GEMINI_API_KEY`). Never name an app key `ANTHROPIC_API_KEY`
+- Secrets only from env vars / `.env` (`GEMINI_API_KEY`). Never log or print the key. Never name an app key `ANTHROPIC_API_KEY`
   (it hijacks Claude Code billing).
+- Keep scratch files (`log copy*.txt`, `*_old.txt`, `dataset/evidence/_orig/`) out of `code.zip`;
+  only `log.txt` is the transcript. Never include `dataset/`, `.venv`, or `.env`.
 - No `eval()`. Read CSVs with `dtype=str` where IDs/phones matter.
 
-## Current status / next steps (handoff 2026-10-29)
+## Current status / next steps (updated 2026-10-29)
 
-### Works
-- Full pipeline runs on all 32 sample cases with 0 errors (LLM stubbed in test harness):
-  24 COMPLETE / 8 INCOMPLETE (COMPLETE is inflated by issue 1 below).
-- EvidenceAgent returns `ResourceFinding`s; `case_01`/`case_02` → `VERIFY_RECORD_ABSENT` citing
-  `evidence_54`; `case_05` → `account_005` PRESENT in failover replica → `DELETE_RECORD`.
-- `StrEnum` enums; new `StepsAgent` per case; `compile()` sorts by phase then operation order;
-  UNKNOWN findings skipped; FINDING steps only for violations; `account_` → `USER_PROFILE`.
+### Blocker right now
+- `python code/main.py` fails at import: `evidence_agent.py` imports `PHONE_RE` from `src.constants`,
+  but it is no longer defined there (`PHONE_LEN` is). Restore the regex before anything else runs.
+  (Also needs `pip install -r requirements.txt` — `google-genai` was missing from the venv.)
+
+### Done (by reading code; re-verify with a run once the blocker is fixed)
+- `CATEGORY_BY_PREFIX` aligned with `deletion_rules.csv` + startup validator; `legal_hold`, `tombstone`,
+  `email_delivery` mapped; `SYSTEM_BY_PREFIX` replaced by evidence-derived owner system
+  (`_build_system_by_prefix`, `TARGET_SYSTEMS` fallback).
+- Finding op from rule action; process (data flow / backup) state read from evidence; field-level
+  `exposed_fields`; shared token-boundary matchers `_term_in_text` / `_phones_in`; search terms built once
+  per case in `search()`; `StepsAgent` created per case and sorts by phase → op priority → system → resource.
 
 ### Fix next (priority order)
-1. **`CATEGORY_BY_PREFIX` names must match `deletion_rules.csv` exactly.** Wrong today:
-   `analytics`→`ANALYTICS_PROFILE`, `backup`→`BACKUP_ARCHIVE`, `cache`→`CACHE_ENTRY`,
-   `marketing`→`MARKETING_PROFILE`, `search`→`SEARCH_INDEX_ENTRY`, `support`→`SUPPORT_MESSAGE`
-   (attachments `SUPPORT_ATTACHMENT`); add `legal_hold`→`LEGAL_HOLD_RECORD`. Unknown name → no rule →
-   silently COMPLETE (e.g. `case_11` search records PRESENT but COMPLETE). Add a startup check in
-   `DeletionRuleAgent` that raises if a mapped category (except `data_flow`) is not in the rules file.
-2. **Finding operation comes from the rule action**, not `exposed_fields`:
-   DELETE → `REPORT_REMAINING_RECORD`; REDACT/ANONYMIZE → `REPORT_EXPOSED_PII`
-   (`case_05` currently emits `REPORT_EXPOSED_PII` for a DELETE record).
-3. **Data flows and backups are processes, not records.** Read real `enabled`
-   (`connector_subscriptions`) and `restore_allowed` (`backup_restore_entries`) instead of the
-   hardcoded attributes. Flow enabled → `REPORT_ACTIVE_DATA_FLOW` → `DISABLE_DATA_FLOW` →
-   `VERIFY_DATA_FLOW_DISABLED`; backup restorable → `REPORT_RESTORE_RISK` → `BLOCK_RESTORE` →
-   `VERIFY_RESTORE_BLOCKED`; already safe → verification with evidence.
-4. **Open question — RETAIN semantics.** `case_17` is COMPLETE while verifying a RETAIN audit record
-   and a tombstone as ABSENT. Decide: "records that must be retained remain available".
-5. **Field-level `exposed_fields`**: personal-data columns still non-empty on the proof record
-   (name, email, phone, email_hash, requester_*, owner_*, customer_email, display_name). Leave
-   reference fields (user_id / subject_reference / customer_reference) to the rule agent per category.
-6. **Real LLM path (not exercised by the stubbed harness):** `print(json.dumps(response))` fails on SDK
-   objects; `json.loads("True")` fails; `_check_validity` calls `.strip()` on a bool/dict; drop the
-   `google_search` tool for classification; Interactions API usage fields are `total_input_tokens`,
-   `total_output_tokens`, `total_tokens` (verify on one real response); `response.model` unconfirmed.
-   ~28/32 validity checks currently fall through to the LLM.
-7. Workflow window noise: same records appear for different users (`account_9335` in cases 13/18/20).
-8. `_filter_by_user` fallback returns ALL identities when no user matches → wrong user via `.iloc[0]`.
-9. Then: sample scorer → `evaluation/evaluation_report.md`; `usage_report.md`; full 518 run; README.
+1. Restore `PHONE_RE`; run all 32 samples; record status counts. Score against `sample_output.csv`
+   only after output is produced (never to derive logic).
+2. **Real LLM path is untested and likely wrong:** `LlmModel.get_response` does `json.loads(content)` on a
+   bare `True`/`False` → JSONDecodeError → `{"error": True}` → validity silently False. Also a debug
+   `print(response)` in `_process_response`; verify Interactions API usage field names
+   (`prompt_tokens`/`completion_tokens` vs `total_input_tokens`/…) and `response.model` on one real response.
+   Design says cache every LLM call — there is no cache yet.
+3. `_filter_by_user` fallback (no unique user) returns ALL identities, and `audit_by_case` only checks
+   `user_identities is None`, so a non-unique/unknown email audits the wrong user via `.iloc[0]`.
+4. `DataHandler.save` writes `dataset/output.csv` and `json.dumps` without `sort_keys`; contract wants
+   repo-root `output.csv`. `DataHandler._load_evidence` only collects `evidence/records/` paths — confirm
+   that is all `EvidenceAgent` needs (it reads via `evidence_files.csv`).
+5. **Open question — RETAIN semantics** (`LEGAL_HOLD_RECORD`, `SECURITY_AUDIT_LOG`, `ACCOUNT_TOMBSTONE`):
+   `evaluate()` never flags a retained record that has gone ABSENT, and verification mirrors the observed
+   state. Decide how "required retained records remain available" is enforced.
+6. Workflow-window noise: same records appear for different users (`account_9335` in cases 13/18/20).
+7. Evaluation: `code/evaluation/main.py` is a stub; no scorer yet. Then `evaluation/evaluation_report.md`
+   (accuracy, ≥3 custom cases, failures/improvements), `evaluation/usage_report.md` from `UsageTracker`,
+   full 518 run, README with setup/run instructions.
+8. Tests are stubs; `pytest` fails at collection (`tests/unit/src/test_utils.py` IndentationError; no
+   pytest `pythonpath = code`). Jason deferred tests — don't touch them unless asked.
 
 ### Way of working
 - Jason writes the code in his own style; Claude explains logic, gives hints (hint ladder), runs the
-  code and reviews. Ignore methods marked `@depracated` / `@deprecated`.
+  code and reviews. Ignore methods marked `@deprecated`.

@@ -9,6 +9,7 @@ import time
 from google import genai
 from google.genai.errors import APIError
 from src.constants import (
+    GEMINI_API_KEY,
     GEMINI_MODEL_NAME,
     INTERNAL_STATUS_ERR_CODE,
     MAX_TOKENS,
@@ -22,7 +23,7 @@ from src.usage_tracker import UsageTracker
 
 class LlmModel:
     def __init__(self):
-        self._client = genai.Client()
+        self._client = genai.Client(api_key=GEMINI_API_KEY)
         self.usage = UsageTracker()
 
     def get_response(self, prompt: str) -> str | dict | bool:
@@ -70,6 +71,7 @@ class LlmModel:
         return {"error": True}
 
     def _process_response(self, response, prompt: str):
+        print(response)
         self.usage.response_id = response.id
         if getattr(response, "usage", None):
             self.usage.record(
