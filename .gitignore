@@ -7,6 +7,7 @@
 .vscode
 
 # Python
+.pytest_cache
 .venv
 venv/
 __pycache__/
@@ -19,3 +20,8 @@ __pycache__/
 output.csv
 code.zip
 agent-trace.zip
+
+# Test coverage output
+.coverage
+.coverage.*
+htmlcov/

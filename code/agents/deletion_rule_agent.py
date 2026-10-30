@@ -32,8 +32,8 @@ import pandas as pd
 from src.constants import (
     ACTION_MAPPING,
     CATEGORY_BY_PREFIX,
-    DEFAULT_REQ_ACTION,
     DEFAULT_RULE_CATEGORY,
+    PROCESS_CATEGORIES,
 )
 from src.enums import DeletionStatus, StepOperations, StepStates
 
@@ -51,7 +51,6 @@ class DeletionRuleAgent:
 
         self.rules = deletion_rules
 
-        self.rule_id = None
         self.data_category = None
         self.condition = None
         self.required_action = None
@@ -59,33 +58,11 @@ class DeletionRuleAgent:
         # Startup fail-safe: Crash immediately on typo rather than returning silent COMPLETE
         valid_categories = set(self.rules["data_category"].unique())
         for prefix, cat in CATEGORY_BY_PREFIX.items():
-            if cat != "DATA_FLOW" and cat not in valid_categories:
+            if cat not in PROCESS_CATEGORIES and cat not in valid_categories:
                 raise ValueError(
                     f"🚨 Startup Error: Mapped category '{cat}' for prefix '{prefix}' "
                     f"does not exist in deletion_rules.csv!"
                 )
-
-    # @depracated
-    def get_category2(self, resource_id: str) -> str:
-        """
-        Maps resource prefix to data category from deletion_rules.csv
-
-        Example lookup against rules DataFrame
-        Assuming deletion_rules.csv has columns like 'prefix' or 'data_category'
-        You can match based on your dataset's specific column structure
-        """
-        prefix = resource_id.split("_")[0]
-
-        matched_category_rule = self.rules[
-            # self.rules["data_category"].str.contains(prefix, case=False, na=False)
-            self.rules["data_category"].str.lower().str.startswith(prefix.lower())
-        ]
-
-        if not matched_category_rule.empty:
-            self.data_category = matched_category_rule.iloc[0]["data_category"]
-            return matched_category_rule.iloc[0]["data_category"]
-
-        return DEFAULT_RULE_CATEGORY  # fallback category
 
     def get_category(self, resource_id: str) -> str:
         """Maps resource ID prefix cleanly to data category using explicit mapping."""
@@ -105,90 +82,62 @@ class DeletionRuleAgent:
 
         return DEFAULT_RULE_CATEGORY
 
-    # @depracated
-    def get_category3(self, resource_id: str) -> str:
-        """Maps resource ID prefix cleanly to data category using explicit mapping."""
-        parts = resource_id.split("_")
-
-        # Check two-word prefixes first (e.g., audit_record, data_flow, email_delivery)
-        if len(parts) >= 3:
-            two_part_prefix = f"{parts[0]}_{parts[1]}"
-            if two_part_prefix in CATEGORY_BY_PREFIX:
-                self.data_category = CATEGORY_BY_PREFIX[two_part_prefix]
-                return self.data_category
-
-        single_prefix = parts[0]
-        if single_prefix in CATEGORY_BY_PREFIX:
-            self.data_category = CATEGORY_BY_PREFIX[single_prefix]
-            return self.data_category
-
-        return DEFAULT_RULE_CATEGORY
-
     def get_rule_by_category(self, category: str) -> dict:
-        """Lookup policy rule based on data category and translate raw CSV actions."""
-        matched_category = self.rules[self.rules["data_category"] == category]
+        """Lookup policy rule for a category and translate the raw CSV action."""
+        # Processes first: DATA_FLOW has no CSV row; BACKUP_ARCHIVE's RETAIN
+        # covers the archive, not its restore path.
+        if category == "DATA_FLOW":
+            return {
+                "data_category": category,
+                "required_action": StepOperations.DISABLE_DATA_FLOW,
+            }
+        if category == "BACKUP_ARCHIVE":
+            return {
+                "data_category": category,
+                "required_action": StepOperations.BLOCK_RESTORE,
+            }
 
-        if not matched_category.empty:
-            category_rule = matched_category.iloc[0].to_dict()
-
-            self.rule_id = category_rule.get("rule_id")
-            self.data_category = category_rule.get("data_category")
-            self.condition = category_rule.get("condition")
-
-            # Translate raw CSV action (e.g., "DELETE", "REDACT") to StepOperations enum
-            raw_action = category_rule.get("required_action", DEFAULT_REQ_ACTION)
-            self.required_action = ACTION_MAPPING.get(
-                raw_action, StepOperations.DELETE_RECORD
-            )
-
-            # Store the mapped enum back in the returned dict so downstream methods use it
-            category_rule["required_action"] = self.required_action
-
-            return category_rule
-
-        return {}
-
-    # @depracated
-    def get_rule_by_category_old(self, category: str) -> dict:
-        """Lookup policy rule based on data category."""
         matched = self.rules[self.rules["data_category"] == category]
+        if matched.empty:
+            return {}
 
-        if not matched.empty:
-            category_rule = matched.iloc[0].to_dict()
-
-            self.rule_id = category_rule["rule_id"]
-            self.data_category = category_rule["data_category"]
-            self.condition = category_rule["condition"]
-            self.required_action = category_rule["required_action"]
-
-            return category_rule
-
-        return {}
+        rule = matched.iloc[0].to_dict()
+        rule["required_action"] = ACTION_MAPPING.get(
+            rule.get("required_action", ""), StepOperations.DELETE_RECORD
+        )
+        return rule
 
     def evaluate(self, finding) -> str:
         """
-        Determines if a ResourceFinding complies with policy or requires remidiation.
+        Determines if a ResourceFinding complies with policy or requires remediation.
         Returns COMPLETE or INCOMPLETE
         """
-
         rule = self.get_rule_by_category(finding.category)
         if not rule:
             return DeletionStatus.COMPLETE
 
-        self.required_action = rule.get("required_action")
+        required_action = rule.get("required_action")
+        self.required_action = required_action
 
-        # If a record must be ABSENT (deleted) but is still PRESENT
-        if (
-            finding.state == StepStates.PRESENT
-            and self.required_action == DEFAULT_REQ_ACTION
+        # 1. Process violations: Data flow or backup restore risk is ACTIVE
+        if finding.state == StepStates.ACTIVE and required_action in (
+            StepOperations.DISABLE_DATA_FLOW,
+            StepOperations.BLOCK_RESTORE,
         ):
             return DeletionStatus.INCOMPLETE
 
-        # If a record must be REDACTED/ANONYMIZED but still exposes unredacted PII fields
+        # 2. Record deletion violations: Record must be ABSENT but is PRESENT
+        if (
+            finding.state == StepStates.PRESENT
+            and required_action == StepOperations.DELETE_RECORD
+        ):
+            return DeletionStatus.INCOMPLETE
+
+        # 3. Redaction / Anonymization violations: Record is PRESENT with unredacted PII
         if (
             finding.state == StepStates.PRESENT
             and finding.exposed_fields
-            and self.required_action
+            and required_action
             in (
                 StepOperations.REDACT_RECORD,
                 StepOperations.ANONYMIZE_RECORD,

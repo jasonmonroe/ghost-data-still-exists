@@ -2,7 +2,7 @@
 
 """
 +-----------------------------------------------------------------------------+
-|                            GHOST DATA STILL EXISTS                          |
+|                         👻 GHOST DATA STILL EXISTS 👻                        |
 +-----------------------------------------------------------------------------+
 
 
@@ -64,7 +64,7 @@ steps (steps_json) detailing what findings were made, what remediation steps are
 
 __author__ = "Jason Monroe (jason@jasonmonroe.com)"
 __copyright__ = "Copyright © 2011-2026 Monroe Labs Co."
-__date__ = "2026-10-25"
+__date__ = "2026-10-25 - 2026-10-29"
 __version__ = "1.1.0"
 
 
@@ -76,32 +76,32 @@ load_dotenv()
 import warnings
 
 # Local Libraries
-from evaluation.main import main as run_evaluation_pipeline
+from evaluation.main import run_project_evaluation
 from pipelines.run_case_audit_pipeline import run_case_audit_pipeline
 from src.constants import APP_NAME
 from src.data_handler import DataHandler
+from src.issues import WARNING, report_issue
 from src.utils import banner, get_run_id, show_time, start_timer, stop_timer
 
 
 def main():
     warnings.filterwarnings("ignore")
 
-    # Calling main pipeline from code evaluation
-    run_evaluation_pipeline()
-
-    # Get Dataset
+    # Load data handler and pass dataset to the pipeline
     data_handle = DataHandler()
-    dataset = data_handle.__dict__
 
     # Running pipelines
-    output_csv = run_case_audit_pipeline(dataset)
+    output_csv, usage = run_case_audit_pipeline(data_handle.__dict__)
 
     if len(output_csv) == 0:
-        print("⚠️ Warning: No output data returned.")
+        report_issue(WARNING, "No output data returned.")
         return
 
     # Override dataset/output.csv
     data_handle.save(output_csv)
+
+    # Calling main pipeline from code evaluation
+    run_project_evaluation(usage, len(output_csv))
 
 
 if __name__ == "__main__":
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     run_id = get_run_id()
     print(f"Run ID: {run_id}")
 
-    banner(APP_NAME.replace("_", " ").upper())
+    banner(APP_NAME.upper())
 
     # Start Time
     start_time = start_timer()
