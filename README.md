@@ -19,7 +19,8 @@ For every request in `dataset/deletion_requests.csv`, this agent:
 The full challenge contract is in [`problem_statement.md`](./problem_statement.md); AI-agent working rules
 are in [`AGENTS.md`](./AGENTS.md) and [`CLAUDE.md`](./CLAUDE.md).
 
-> **Project status:** work in progress. See [Status](#status) for what runs today and what is open.
+> **Project status:** the full pipeline runs end to end on the 32 sample cases (87.5% status accuracy). The
+> live LLM path is not yet verified and the 518-case run has not been produced. See [Status](#status).
 
 ---
 
@@ -92,9 +93,13 @@ Key design points:
     │   ├── constants.py               config, regexes, mappings, prompts
     │   ├── enums.py                   statuses, phases, operations, states
     │   ├── data_handler.py            loads CSVs, evidence paths, saves output
-    │   ├── usage_tracker.py           per-model token usage for the usage report
+    │   ├── usage_tracker.py           per-model token usage (least/most expensive prompts)
+    │   ├── issues.py                  collects run warnings/errors for the evaluation summary
     │   └── utils.py                   helpers
-    ├── evaluation/                    scorer + evaluation_report.md / usage_report.md
+    ├── evaluation/
+    │   ├── main.py                    scorer, usage report writer, warnings summary
+    │   ├── evaluation_report.md       written by hand from the scorer output
+    │   └── usage_report.md            regenerated from the usage tracker on every run
     └── tests/{unit,feature}/          mirrors the source tree
 ```
 
@@ -120,6 +125,7 @@ cp .env.example .env                 # then fill in the values below
 | `GEMINI_MODEL_NAME` | Model used for intent classification. |
 | `GEMINI_API_ENDPOINT` | API endpoint. |
 | `USE_SAMPLE` | `True` runs the 32 sample requests; `False` runs all 518. |
+| `INPUT_PRICE_PER_MTOK`, `OUTPUT_PRICE_PER_MTOK` | Optional USD per 1M tokens; enables the cost estimate in `usage_report.md`. |
 | `APP_NAME`, `LOG_LEVEL` | Display name and log verbosity. |
 
 ## Run
@@ -131,8 +137,18 @@ source .venv/bin/activate
 python code/main.py
 ```
 
-With `USE_SAMPLE=False` this processes all 518 requests. The final submission file must be the root-level
-`output.csv` with the columns `case_id,deletion_status,steps_json`, sorted by `case_id`.
+With `USE_SAMPLE=False` this processes all 518 requests. The pipeline writes the root-level `output.csv`
+(`case_id,deletion_status,steps_json`, sorted by `case_id`), then automatically:
+
+1. scores it against `dataset/sample_output.csv` (sample mode) or prints the status distribution only
+   (full mode, which has no labels);
+2. prints the token usage, including the **least and most expensive prompts** from the usage tracker;
+3. rewrites `code/evaluation/usage_report.md` from the tracker's real counts; and
+4. prints every warning and error collected during the run, grouped by message.
+
+Unclear requests are classified by the LLM. If it fails (outage, rate limit, no credits), the request is
+treated as a deletion request and a warning is recorded (`VALIDITY_FALLBACK_ON_LLM_ERROR` in
+`src/constants.py`), so a broken key shows up in the summary instead of silently skipping cases.
 
 ## Tests
 
@@ -167,18 +183,28 @@ steps and the verification steps of an `INCOMPLETE` case describe future work an
 
 ## Status
 
-**Working (by design, being re-verified):** request validity check, identity resolution through current
-and historical emails, record-level evidence matching, per-resource state proof, category mapping with a
-startup validator, rule-driven finding/remediation/verification steps, deterministic ordering.
+**Working:** the full pipeline runs end to end on the 32 samples: validity check, identity resolution through
+current and historical emails, record-level evidence matching, per-resource state proof, rule-driven steps,
+deterministic ordering, scoring, usage report and a warnings summary.
+
+**Latest sample run** (LLM calls failed with `402 credits depleted`, so the 28 ambiguous requests used the
+fallback; see `code/evaluation/evaluation_report.md`):
+
+| Metric | Result |
+| --- | --- |
+| Status accuracy | 87.50% (28/32) |
+| Step precision / recall / F1 (strict) | 0.66 / 0.62 / 0.63 |
+| Field accuracy (paired steps) | system_id 100%, operation 90.3%, state 90.3%, evidence_id 94.4% |
+| Exact sequence match | 15.6% |
+| Phase-order violations | 0 |
 
 **Open:**
 
-- the program currently fails at import (`PHONE_RE` missing from `src/constants.py`) while the code is
-  being cleaned up;
-- the real LLM call path is not yet verified end to end;
-- evaluation scorer, `evaluation_report.md` and `usage_report.md` are not written yet;
-- unit and feature tests are stubs;
-- the final 518-case run has not been produced.
+- the live LLM path and the real token counts are unverified until the Gemini account has credits;
+- exact step sequences match in only 5 of 32 cases;
+- the final 518-case run has not been produced;
+- `usage_report.md` and `evaluation_report.md` must be refreshed from that final run;
+- unit and feature tests are stubs.
 
 The detailed, prioritized list lives in [`CLAUDE.md`](./CLAUDE.md).
 

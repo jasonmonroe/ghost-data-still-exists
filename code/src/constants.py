@@ -17,7 +17,17 @@ APP_NAME = os.getenv("APP_NAME", "Ghost Data Still Exists")
 GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_API_ENDPOINT = os.getenv("GEMINI_API_ENDPOINT")
-USE_SAMPLE = os.getenv("USE_SAMPLE", "True")
+# Parsed once here; every module imports this bool (never re-parse the env var).
+# Optional USD price per 1M tokens, used only for the cost estimate in usage_report.md.
+# Left unset, the report says "price not configured" instead of guessing.
+INPUT_PRICE_PER_MTOK = os.getenv("INPUT_PRICE_PER_MTOK")
+OUTPUT_PRICE_PER_MTOK = os.getenv("OUTPUT_PRICE_PER_MTOK")
+USE_SAMPLE = os.getenv("USE_SAMPLE", "True").strip().lower() in (
+    "true",
+    "1",
+    "t",
+    "yes",
+)
 
 
 # ============================================================================
@@ -25,7 +35,8 @@ USE_SAMPLE = os.getenv("USE_SAMPLE", "True")
 # ============================================================================
 
 DATASET_PATH = Path("./dataset/")
-OUTPUT_FILE = DATASET_PATH / "output.csv"
+OUTPUT_FILE = "output.csv"
+OUTPUT_FILEPATH = Path(".") / OUTPUT_FILE  # repo root, per the submission contract
 
 DATASET_FILES = [
     "deletion_requests",
@@ -61,6 +72,11 @@ PHONE_LEN = 7
 OUTPUT_COLUMNS = ["case_id", "deletion_status", "steps_json"]
 DEFAULT_RULE_CATEGORY = "general_record"
 
+# If the LLM cannot classify a request (outage, rate limit, bad output), treat it
+# as a deletion request. Missing real leftover data is the failure this audit
+# exists to prevent; a false NOT_APPLICABLE would hide it.
+VALIDITY_FALLBACK_ON_LLM_ERROR = True
+
 # Fallback sort priority for unknown or unmapped phases/operations
 DEFAULT_SORT_PRIORITY = 99
 
@@ -79,6 +95,7 @@ ABSENT_HINT_RE = re.compile(
 LINK_RE = re.compile(
     r"linked (\S+) .*? to ([\w.-]+@[\w.-]+) and (user_\d+)", re.IGNORECASE
 )
+PHONE_RE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 PROCESS_TABLE_STATE_RE = re.compile(
     r"\|\s*(ACTIVE|BLOCKED|DISABLED)\s*\|", re.IGNORECASE
 )
@@ -235,38 +252,42 @@ NON_DELETION_KEYWORDS = (
 # LLM PROMPTS & TEMPLATES
 # ============================================================================
 
-SYSTEM_INSTR_PROMPT = """You are a consumer behavioral expert and data privacy
-compliance auditor. Your task is to analyze customer messages to determine if they explicitly 
-authorize deleting their account, profile, or personal data.
+SYSTEM_INSTR_PROMPT = """
+You are a consumer behavioral expert and data privacy compliance auditor. Your 
+task is to analyze customer messages to determine if they explicitly authorize 
+deleting their account, profile, or personal data.
 
 Classification Rules:
 - DELETION: The person asks to delete, erase, close, or remove their account or 
-personal data (in any language, including indirect phrasing like "close my 
-account and remove my details").
+  personal data (in any language, including indirect phrasing like "close my 
+  account and remove my details").
 - NOT_DELETION: Data access/copy requests, exports, corrections/updates, 
-marketing/email opt-outs, unsubscribes, password resets, complaints, or 
-questions.
+  marketing/email opt-outs, unsubscribes, password resets, complaints, or 
+  questions.
 - If a request mixes both, it is DELETION only if deletion is explicitly 
 requested.
 - If the request is in a language other than English, translate and evaluate 
 its intent.
 
 Output Requirement:
-Return ONLY the exact boolean value True or False. Do not include markdown 
-fences, prose, or explanation.""".strip()
+Return ONLY the exact boolean value True or False.
+Do not include markdown fences, prose, or explanation.
+""".strip()
 
-VALIDITY_PROMPT = """As a user behavioral expert, analyze this user request to 
-determine if they're explicitly requesting to delete, erase, close, or remove their 
-account, profile, or personal data. 
+VALIDITY_PROMPT = """
+As a user behavioral expert, analyze this user request to determine if they're 
+explicitly requesting to delete, erase, close, or remove their account, profile, 
+or personal data.
 
-Note: 
+Note:
 - If the request is in a language other than English, translate and evaluate 
-its intent.
+  its intent.
 - Requests for data export, downloading data, changing passwords, updating 
-emails, or unsubscribing from marketing emails are NOT deletion requests and
- must return False.
+  emails, or unsubscribing from marketing emails are NOT deletion requests and
+  must return False.
 
-Return ONLY the boolean value `True` or `False`.
-`
+Return ONLY the boolean value True or False.
+
 CUSTOMER REQUEST:
-{request_text}\n""".strip()
+"{request_text}"
+""".strip()

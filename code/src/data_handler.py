@@ -15,7 +15,7 @@ from src.constants import (
     DATASET_FILES,
     DATASET_PATH,
     OUTPUT_COLUMNS,
-    OUTPUT_FILE,
+    OUTPUT_FILEPATH,
     USE_SAMPLE,
 )
 
@@ -47,7 +47,7 @@ class DataHandler:
                 )
 
         # Override output if using sample
-        if USE_SAMPLE in [True, "True"]:
+        if USE_SAMPLE:
             self.output = self.sample_output
             self.deletion_requests = self.sample_deletion_requests
 
@@ -69,4 +69,4 @@ class DataHandler:
         output_df = pd.DataFrame(output_csv, columns=OUTPUT_COLUMNS)
         output_df["steps_json"] = output_df["steps_json"].apply(json.dumps)
 
-        output_df.sort_values("case_id").to_csv(OUTPUT_FILE, index=False)
+        output_df.sort_values("case_id").to_csv(OUTPUT_FILEPATH, index=False)

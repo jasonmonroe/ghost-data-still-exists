@@ -50,7 +50,8 @@ from src.constants import (
     TARGET_SYSTEMS,
     TRACE_ID_RE,
 )
-from src.enums import StepStates
+from src.enums import StepOperations, StepStates
+from src.issues import ERROR, WARNING, report_issue
 from src.utils import clean_str, prefix_of
 
 
@@ -264,9 +265,9 @@ class EvidenceAgent:
         state, evidence_id = self._state(resource_id, after, evidence)
 
         category = rules_agent.get_category(resource_id)
-        exposed = frozenset(
-            self._get_exposed(state, evidence, resource_id, evidence_id)
-        )
+        inspected = self._get_exposed(state, evidence, resource_id, evidence_id)
+        state = self._treated_state(state, category, inspected, rules_agent)
+        exposed = frozenset(inspected or ())
         system_id = self._system_by_prefix.get(
             prefix_of(resource_id), str(StepStates.UNKNOWN.value).lower()
         )
@@ -283,25 +284,43 @@ class EvidenceAgent:
 
     def _get_exposed(
         self, state: str, evidence: list[dict], resource_id: str, evidence_id: str
-    ) -> set[str]:
+    ) -> set[str] | None:
         """
         Inspects the structured proof record dictionary to find exact PII field names
         that are still populated, ignoring reference fields.
+
+        Returns the exposed fields (empty set = record inspected and clean), or
+        None when the record could not be inspected (not PRESENT, or proof is
+        not structured JSON/SQL).
         """
-        exposed: set[str] = set()
         if state != StepStates.PRESENT or not evidence_id:
-            return exposed
+            return None
 
         target = next((e for e in evidence if e.get("file_id") == evidence_id), None)
         if not target or target["file_path"].suffix.lower() not in {".json", ".sql"}:
-            return exposed
+            return None
 
         for chunk in self._get_content_chunks(target["content"]):
             if resource_id in chunk:
+                exposed: set[str] = set()
                 self._inspect_chunk_for_personal_info(chunk, exposed)
-                break
+                return exposed
 
-        return exposed
+        return None
+
+    @staticmethod
+    def _treated_state(state, category, inspected, rules_agent):
+        """A record that still exists but exposes no personal fields has the
+        treatment its rule demands: REDACT -> REDACTED, ANONYMIZE -> ANONYMIZED.
+        Only applies when the record was actually inspected and found clean."""
+        if state != StepStates.PRESENT or inspected != set():
+            return state
+
+        action = rules_agent.get_rule_by_category(category).get("required_action")
+        return {
+            StepOperations.REDACT_RECORD: StepStates.REDACTED,
+            StepOperations.ANONYMIZE_RECORD: StepStates.ANONYMIZED,
+        }.get(action, state)
 
     @staticmethod
     def _inspect_chunk_for_personal_info(chunk, exposed: set[str]) -> None:
@@ -313,7 +332,7 @@ class EvidenceAgent:
                     if value not in (None, "", "null"):
                         exposed.add(field)
         except (json.JSONDecodeError, TypeError):
-            print("🚨 Error: Data not decoded.")
+            report_issue(ERROR, "Evidence record JSON could not be decoded.")
 
     def _get_search_terms(self) -> tuple[set[str], set[str]]:
         """(text terms, phone digit strings) for this user: current + historical."""
@@ -471,7 +490,7 @@ class EvidenceAgent:
             filepath = DATASET_PATH / evidence_file["file_path"]
 
             if not filepath.exists():
-                print(f"🚨 Error: {filepath} does not exist.")
+                report_issue(ERROR, f"Evidence file {filepath} does not exist.")
                 continue
 
             evidence.append(
@@ -539,7 +558,7 @@ class EvidenceAgent:
             with Image.open(filepath) as img:
                 return pytesseract.image_to_string(img)
         except Exception as e:  # OCR is best-effort
-            print(f"🚨 OCR failed for {filepath}: {e}")
+            report_issue(WARNING, f"OCR failed for {filepath}: {e}")
             return ""
 
     @staticmethod

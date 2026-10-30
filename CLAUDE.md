@@ -122,10 +122,15 @@ when neither list matches) → `_filter_by_user` (current or historical email �
 
 ## Current status / next steps (updated 2026-10-29)
 
-### Blocker right now
-- `python code/main.py` fails at import: `evidence_agent.py` imports `PHONE_RE` from `src.constants`,
-  but it is no longer defined there (`PHONE_LEN` is). Restore the regex before anything else runs.
-  (Also needs `pip install -r requirements.txt` — `google-genai` was missing from the venv.)
+### State (2026-10-29)
+- Pipeline runs end to end on the 32 samples: 87.5% status accuracy, strict step F1 0.63, exact sequence
+  15.6%, 0 phase-order violations (measured with all 28 LLM validity calls on the fallback).
+- Gemini calls currently fail: `402 prepayment credits depleted`. Real token counts / least-most prompts are
+  unverified. Usage field names were checked against the SDK types, not a live response.
+- Output now goes to repo-root `output.csv`; evaluation then scores, prints usage + issues, and rewrites
+  `code/evaluation/usage_report.md` from `UsageTracker`. Warnings/errors go through `src/issues.py`
+  (`report_issue`) — use it instead of bare `print("⚠️ …")`.
+- `USE_SAMPLE` is parsed once in `constants.py` as a bool; never re-parse the env var.
 
 ### Done (by reading code; re-verify with a run once the blocker is fixed)
 - `CATEGORY_BY_PREFIX` aligned with `deletion_rules.csv` + startup validator; `legal_hold`, `tombstone`,
@@ -136,27 +141,17 @@ when neither list matches) → `_filter_by_user` (current or historical email �
   per case in `search()`; `StepsAgent` created per case and sorts by phase → op priority → system → resource.
 
 ### Fix next (priority order)
-1. Restore `PHONE_RE`; run all 32 samples; record status counts. Score against `sample_output.csv`
-   only after output is produced (never to derive logic).
-2. **Real LLM path is untested and likely wrong:** `LlmModel.get_response` does `json.loads(content)` on a
-   bare `True`/`False` → JSONDecodeError → `{"error": True}` → validity silently False. Also a debug
-   `print(response)` in `_process_response`; verify Interactions API usage field names
-   (`prompt_tokens`/`completion_tokens` vs `total_input_tokens`/…) and `response.model` on one real response.
-   Design says cache every LLM call — there is no cache yet.
-3. `_filter_by_user` fallback (no unique user) returns ALL identities, and `audit_by_case` only checks
-   `user_identities is None`, so a non-unique/unknown email audits the wrong user via `.iloc[0]`.
-4. `DataHandler.save` writes `dataset/output.csv` and `json.dumps` without `sort_keys`; contract wants
-   repo-root `output.csv`. `DataHandler._load_evidence` only collects `evidence/records/` paths — confirm
-   that is all `EvidenceAgent` needs (it reads via `evidence_files.csv`).
+1. Restore Gemini billing, re-run, confirm real usage counts, then refresh both reports.
+2. Debug exact-sequence mismatches (5/32) and the 4 wrong statuses (`case_03`, `case_07`, `case_10`,
+   `case_12`); ~49 expected steps have no prediction with the same phase+resource.
+3. Decide whether non-retryable LLM errors (402/404) should abort the run instead of using the fallback.
+4. `_filter_by_user` fallback returns ALL identities when no unique user matches; `audit_by_case` then
+   audits the wrong user via `.iloc[0]`.
 5. **Open question — RETAIN semantics** (`LEGAL_HOLD_RECORD`, `SECURITY_AUDIT_LOG`, `ACCOUNT_TOMBSTONE`):
-   `evaluate()` never flags a retained record that has gone ABSENT, and verification mirrors the observed
-   state. Decide how "required retained records remain available" is enforced.
-6. Workflow-window noise: same records appear for different users (`account_9335` in cases 13/18/20).
-7. Evaluation: `code/evaluation/main.py` is a stub; no scorer yet. Then `evaluation/evaluation_report.md`
-   (accuracy, ≥3 custom cases, failures/improvements), `evaluation/usage_report.md` from `UsageTracker`,
-   full 518 run, README with setup/run instructions.
-8. Tests are stubs; `pytest` fails at collection (`tests/unit/src/test_utils.py` IndentationError; no
-   pytest `pythonpath = code`). Jason deferred tests — don't touch them unless asked.
+   `evaluate()` never flags a retained record that has gone ABSENT.
+6. Workflow-window noise: the same records appear for different users.
+7. No response cache for LLM calls yet (design decision 6 says cache every call).
+8. Full 518 run, final README pass. Tests are stubs (Jason deferred them; `pytest` collection errors).
 
 ### Way of working
 - Jason writes the code in his own style; Claude explains logic, gives hints (hint ladder), runs the

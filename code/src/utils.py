@@ -109,3 +109,11 @@ def clean_str(value) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return ""
     return str(value).strip()
+
+
+def normalize_resource(value) -> str:
+    """Normalize resource IDs, treating None, 'None', 'null', and empty strings uniformly."""
+    cleaned = clean_str(value)
+    if cleaned.lower() in ("none", "null", ""):
+        return ""
+    return cleaned

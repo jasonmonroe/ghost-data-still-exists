@@ -31,9 +31,11 @@ from src.constants import (
     FINDING_OP_BY_ACTION,
     NON_DELETION_KEYWORDS,
     VALID_KEYPHRASES,
+    VALIDITY_FALLBACK_ON_LLM_ERROR,
     VALIDITY_PROMPT,
 )
 from src.enums import DeletionStatus, StepOperations, StepStates
+from src.issues import WARNING, report_issue
 
 
 class CaseAuditorAgent:
@@ -52,6 +54,10 @@ class CaseAuditorAgent:
         self.reported_at = None
         self.audit_at = None
         self.request_text = None
+
+    @property
+    def usage(self):
+        return self._model.usage
 
     def audit_by_case(self, case_s: pd.Series) -> list:
         self._steps_agent = StepsAgent()
@@ -104,12 +110,13 @@ class CaseAuditorAgent:
             return response
 
         if isinstance(response, dict):
-            if response.get("error"):
-                print(
-                    "⚠️ Warning: LLM call failed with error. Defaulting validity to False."
-                )
-                return False
-            return False
+            # Error dict or unexpected JSON: apply the deliberate fallback and say so.
+            report_issue(
+                WARNING,
+                f"Case {self.case_id}: LLM could not classify the request. "
+                f"Defaulting validity to {VALIDITY_FALLBACK_ON_LLM_ERROR}.",
+            )
+            return VALIDITY_FALLBACK_ON_LLM_ERROR
 
         return str(response).strip().lower() in ("true", "yes", "1")
 
@@ -161,8 +168,9 @@ class CaseAuditorAgent:
 
         if len(user_identity) != 1:
             # Return the unfiltered datasets
-            print(
-                f"⚠️ Warning: Case: {self.case_id} User {self.email} unknown or multiple users returned."
+            report_issue(
+                WARNING,
+                f"Case {self.case_id}: user {self.email} unknown or multiple users returned.",
             )
 
             return {
@@ -246,7 +254,10 @@ class CaseAuditorAgent:
 
         for finding in findings:
             if finding.state == StepStates.UNKNOWN:
-                print("⚠️ Warning: Evidence Finding State is `UNKNOWN`")
+                report_issue(
+                    WARNING,
+                    f"Case {self.case_id}: finding {finding.resource_id} has UNKNOWN state.",
+                )
                 continue
 
             rule = self._rules_agent.get_rule_by_category(finding.category)

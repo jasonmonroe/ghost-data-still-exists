@@ -10,4 +10,5 @@ pypdf
 pytesseract
 pytest
 python-dotenv
+scikit-learn
 xmltodict

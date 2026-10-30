@@ -33,5 +33,5 @@ def run_case_audit_pipeline(dataset: dict):
 
         print(f"Case ID: {case_df['case_id']}" + get_progress_bar(index + 1, row_count))
 
-    # Return the output csv data
-    return output_csv
+    # Return the rows plus the usage tracker (for the evaluation report)
+    return output_csv, auditor.usage

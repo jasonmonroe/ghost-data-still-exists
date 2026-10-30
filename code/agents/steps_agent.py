@@ -25,6 +25,7 @@ from src.constants import (
     VERIFY_STATE_MAPPING,
 )
 from src.enums import StepOperations, StepPhases, StepStates
+from src.utils import normalize_resource
 
 
 class StepsAgent:
@@ -58,7 +59,7 @@ class StepsAgent:
         self, finding: ResourceFinding, operation: StepOperations
     ) -> None:
         """The caller decides the finding operation; this only records it."""
-        self.add(
+        self._add(
             phase=StepPhases.FINDING,
             system_id=finding.system_id,
             resource_id=finding.resource_id,
@@ -74,7 +75,7 @@ class StepsAgent:
         # Map required action to its target state
         remediation_state = VERIFY_STATE_MAPPING.get(required_action, StepStates.ABSENT)
 
-        self.add(
+        self._add(
             StepPhases.REMEDIATION,
             finding.system_id,
             finding.resource_id,
@@ -84,7 +85,7 @@ class StepsAgent:
         )
 
     def add_verification_phase(self, finding: ResourceFinding) -> None:
-        self.add(
+        self._add(
             phase=StepPhases.VERIFICATION,
             system_id=finding.system_id,
             resource_id=finding.resource_id,
@@ -93,7 +94,7 @@ class StepsAgent:
             evidence_id=self._verify_evidence,
         )
 
-    def add(
+    def _add(
         self,
         phase: str,
         system_id: str,
@@ -107,8 +108,8 @@ class StepsAgent:
         self._data.append(
             {
                 "phase": phase,
-                "system_id": system_id,  # system_activity.source_system
-                "resource_id": resource_id,  # system_activity.resource_id
+                "system_id": system_id,
+                "resource_id": normalize_resource(resource_id),
                 "operation": operation,
                 "state": state,
                 "evidence_id": evidence_id if evidence_id is not None else "",
@@ -117,8 +118,10 @@ class StepsAgent:
 
     def compile(self) -> str:
         """
-        Compiles all added steps, enforces consecutive numbering starting and
-        returns the final JSON string for steps_json.
+        Compiles all added steps, sorts them, enforces consecutive numbering,
+        and returns the final JSON string for steps_json.
+        Sort key: phase (FINDING, REMEDIATION, VERIFICATION), then operation
+        priority, then system_id, then resource_id.
         Returns '[]' if no steps exist (e.g. for NOT_APPLICABLE cases).
         """
         if not self._data:
